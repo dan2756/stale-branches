@@ -3,8 +3,9 @@
 List old or merged git branches.
 
 `stale-branches` shows every local branch with the age of its last commit,
-the last author, and whether it is already merged into the base branch, so you
-can see at a glance what is safe to clean up.
+the last author, whether it is already merged into the base branch, and how
+far ahead and behind the base it is, so you can see at a glance what is safe
+to clean up.
 
 ## Install
 
@@ -18,11 +19,14 @@ Run it anywhere inside a git repository:
 
 ```console
 $ stale-branches
-BRANCH        AGE           AUTHOR  STATUS
-feature/old   7 months ago  Alice   merged
-main          2 hours ago   Alice   merged
-wip           2 hours ago   Alice   unmerged
+BRANCH       AGE           AUTHOR  STATUS    AHEAD  BEHIND
+feature/old  7 months ago  Alice   merged        0      14
+main         2 hours ago   Alice   merged        0       0
+wip          2 hours ago   Alice   unmerged      3       1
 ```
+
+Branches are listed oldest first. `AHEAD` counts commits only on the branch,
+`BEHIND` counts commits only on the base.
 
 The base branch is the target of `origin/HEAD`, else `main`, else `master`.
 Use `--base develop` to compare against something else.

@@ -19,6 +19,8 @@ type Branch struct {
 	Email   string
 	Current bool // checked out in this worktree
 	Merged  bool // tip is an ancestor of the base
+	Ahead   int  // commits on the branch that are not on the base
+	Behind  int  // commits on the base that are not on the branch
 }
 
 // repo wraps the git queries the tool needs.
@@ -102,7 +104,8 @@ func (r *repo) listRefs(prefix string) ([]Branch, error) {
 	return branches, nil
 }
 
-// classify fills in merge status for each branch relative to base.
+// classify fills in merge status and ahead/behind counts for each branch
+// relative to base.
 func (r *repo) classify(branches []Branch, base string) error {
 	for i := range branches {
 		b := &branches[i]
@@ -111,6 +114,28 @@ func (r *repo) classify(branches []Branch, base string) error {
 			return err
 		}
 		b.Merged = merged
+		if b.Behind, b.Ahead, err = r.aheadBehind(base, b.Ref); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// aheadBehind counts commits only on base (left) and only on ref (right).
+func (r *repo) aheadBehind(base, ref string) (left, right int, err error) {
+	out, err := r.git.output("rev-list", "--left-right", "--count", base+"..."+ref)
+	if err != nil {
+		return 0, 0, err
+	}
+	f := strings.Fields(out)
+	if len(f) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output: %q", out)
+	}
+	if left, err = strconv.Atoi(f[0]); err != nil {
+		return 0, 0, err
+	}
+	if right, err = strconv.Atoi(f[1]); err != nil {
+		return 0, 0, err
+	}
+	return left, right, nil
 }

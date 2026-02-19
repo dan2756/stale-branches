@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,11 +50,20 @@ func plural(n int, unit string) string {
 
 // writeTable prints branches as an aligned table.
 func writeTable(w io.Writer, branches []Branch, now time.Time) {
-	rows := [][]string{{"BRANCH", "AGE", "AUTHOR", "STATUS"}}
+	header := []string{"BRANCH", "AGE", "AUTHOR", "STATUS", "AHEAD", "BEHIND"}
+	rightAlign := []bool{false, false, false, false, true, true}
+	rows := [][]string{header}
 	for _, b := range branches {
-		rows = append(rows, []string{b.Name, relativeAge(b.Date, now), b.Author, status(b)})
+		rows = append(rows, []string{
+			b.Name,
+			relativeAge(b.Date, now),
+			b.Author,
+			status(b),
+			strconv.Itoa(b.Ahead),
+			strconv.Itoa(b.Behind),
+		})
 	}
-	widths := make([]int, len(rows[0]))
+	widths := make([]int, len(header))
 	for _, row := range rows {
 		for i, cell := range row {
 			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
@@ -62,9 +72,16 @@ func writeTable(w io.Writer, branches []Branch, now time.Time) {
 	for _, row := range rows {
 		var sb strings.Builder
 		for i, cell := range row {
-			sb.WriteString(cell)
-			if i < len(row)-1 {
-				sb.WriteString(strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell)+2))
+			pad := strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell))
+			if i > 0 {
+				sb.WriteString("  ")
+			}
+			if rightAlign[i] {
+				sb.WriteString(pad + cell)
+			} else if i < len(row)-1 {
+				sb.WriteString(cell + pad)
+			} else {
+				sb.WriteString(cell)
 			}
 		}
 		fmt.Fprintln(w, sb.String())
