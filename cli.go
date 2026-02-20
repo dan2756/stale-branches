@@ -24,15 +24,27 @@ const usageText = `stale-branches - list old or merged git branches
 Usage:
   stale-branches [flags]
 
-Lists local branches with the age of their last commit, its author, and
-whether the branch is merged into the base branch.
+Lists stale local branches with the age of their last commit, its author,
+whether the branch is merged into the base branch, and how far ahead and
+behind the base it is. A branch is stale when it is merged into the base or
+its last commit is more than 90 days old.
 
-Flags:
-      --base BRANCH   compare against BRANCH
-                      (default: target of origin/HEAD, else main, else master)
-  -C DIR              run as if started in DIR
-  -h, --help          show this help
-      --version       print the version and exit
+Selection:
+      --base BRANCH      compare against BRANCH
+                         (default: target of origin/HEAD, else main, else master)
+      --all              list every branch, not just stale ones
+      --merged           only branches merged into the base
+      --unmerged         only branches not merged into the base
+      --older-than AGE   only branches whose last commit is older than AGE,
+                         e.g. 90d, 6w, 3mo, 1y
+
+  --merged, --unmerged and --older-than replace the default stale rule and
+  are combined with AND.
+
+Other:
+  -C DIR                 run as if started in DIR
+  -h, --help             show this help
+      --version          print the version and exit
 
 Exit status: 0 ok, 1 git error or not a git repository, 2 usage error.
 `
@@ -48,6 +60,7 @@ type options struct {
 	dir     string
 	base    string
 	version bool
+	filter  filter
 }
 
 func parseArgs(args []string) (*options, error) {
@@ -57,11 +70,25 @@ func parseArgs(args []string) (*options, error) {
 	fs.StringVar(&opts.dir, "C", "", "")
 	fs.StringVar(&opts.base, "base", "", "")
 	fs.BoolVar(&opts.version, "version", false, "")
+	fs.BoolVar(&opts.filter.all, "all", false, "")
+	fs.BoolVar(&opts.filter.merged, "merged", false, "")
+	fs.BoolVar(&opts.filter.unmerged, "unmerged", false, "")
+	olderThan := fs.String("older-than", "", "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if opts.filter.merged && opts.filter.unmerged {
+		return nil, errors.New("--merged and --unmerged are mutually exclusive")
+	}
+	if *olderThan != "" {
+		age, err := parseAge(*olderThan)
+		if err != nil {
+			return nil, fmt.Errorf("--older-than: %v", err)
+		}
+		opts.filter.olderThan = age
 	}
 	return opts, nil
 }
@@ -110,7 +137,22 @@ func execute(opts *options, e *env) error {
 	if err := r.classify(branches, base); err != nil {
 		return err
 	}
-	writeTable(e.stdout, branches, e.now())
+	now := e.now()
+	var selected []Branch
+	for _, b := range branches {
+		// The base is trivially merged into itself; only --all shows it.
+		if b.Ref == base && !opts.filter.all {
+			continue
+		}
+		if opts.filter.match(b, now) {
+			selected = append(selected, b)
+		}
+	}
+	if len(selected) == 0 {
+		fmt.Fprintln(e.stderr, "no matching branches")
+		return nil
+	}
+	writeTable(e.stdout, selected, now)
 	return nil
 }
 

@@ -71,7 +71,7 @@ func TestClassify(t *testing.T) {
 
 func TestBranchesSortedOldestFirst(t *testing.T) {
 	r := fixture(t)
-	out, _, code := r.runTool()
+	out, _, code := r.runTool("--all")
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
