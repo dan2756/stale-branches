@@ -42,6 +42,7 @@ Use `--base develop` to compare against something else.
 | `--older-than AGE` | only branches whose last commit is older than `AGE` |
 | `--author REGEX` | only branches whose last commit author matches (against `Name <email>`) |
 | `--pattern GLOB` | only branches matching `GLOB`; repeat for several |
+| `--protect LIST` | comma-separated globs of branches never to touch |
 | `-C DIR` | run as if started in `DIR` |
 | `--version` | print the version |
 
@@ -53,6 +54,25 @@ Ages are a number followed by `h`, `d`, `w`, `mo` (30 days) or `y` (365 days):
 `--author` and `--pattern` always narrow the result further. `--author` uses
 Go regexp syntax (prefix with `(?i)` for case-insensitive). In `--pattern`,
 `*` also matches `/`, so `feature/*` covers `feature/auth/login` too.
+
+## Protected branches
+
+The current branch and the base branch are always protected. On top of that,
+branches matching `main,master,develop,release/*` are protected by default.
+Protected branches never show up as stale; `--all` lists them with a `NOTE`
+saying why.
+
+Replace the default list per repository (or globally with `--global`):
+
+```sh
+git config stale-branches.protect 'main,develop,release/*,hotfix/*'
+```
+
+The key may be given several times (`git config --add`). `--protect` on the
+command line overrides both; `--protect ''` leaves only the current and base
+branches protected.
+
+## Exit status
 
 Exit status is 0 on success, 1 on a git error or outside a repository, and 2
 on a usage error.

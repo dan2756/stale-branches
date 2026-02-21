@@ -73,3 +73,16 @@ func (g *gitRunner) refExists(ref string) bool {
 	_, err := g.output("rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	return err == nil
 }
+
+// configValues returns all values of a git config key, or nil if unset.
+func (g *gitRunner) configValues(key string) ([]string, error) {
+	out, err := g.output("config", "--get-all", key)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return strings.Split(strings.TrimRight(out, "\n"), "\n"), nil
+}

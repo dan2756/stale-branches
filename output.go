@@ -52,16 +52,28 @@ func plural(n int, unit string) string {
 func writeTable(w io.Writer, branches []Branch, now time.Time) {
 	header := []string{"BRANCH", "AGE", "AUTHOR", "STATUS", "AHEAD", "BEHIND"}
 	rightAlign := []bool{false, false, false, false, true, true}
+	withNote := false
+	for _, b := range branches {
+		withNote = withNote || b.Protected != ""
+	}
+	if withNote {
+		header = append(header, "NOTE")
+		rightAlign = append(rightAlign, false)
+	}
 	rows := [][]string{header}
 	for _, b := range branches {
-		rows = append(rows, []string{
+		row := []string{
 			b.Name,
 			relativeAge(b.Date, now),
 			b.Author,
 			status(b),
 			strconv.Itoa(b.Ahead),
 			strconv.Itoa(b.Behind),
-		})
+		}
+		if withNote {
+			row = append(row, b.Protected)
+		}
+		rows = append(rows, row)
 	}
 	widths := make([]int, len(header))
 	for _, row := range rows {
@@ -78,12 +90,10 @@ func writeTable(w io.Writer, branches []Branch, now time.Time) {
 			}
 			if rightAlign[i] {
 				sb.WriteString(pad + cell)
-			} else if i < len(row)-1 {
-				sb.WriteString(cell + pad)
 			} else {
-				sb.WriteString(cell)
+				sb.WriteString(cell + pad)
 			}
 		}
-		fmt.Fprintln(w, sb.String())
+		fmt.Fprintln(w, strings.TrimRight(sb.String(), " "))
 	}
 }

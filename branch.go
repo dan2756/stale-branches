@@ -21,6 +21,8 @@ type Branch struct {
 	Merged  bool // tip is an ancestor of the base
 	Ahead   int  // commits on the branch that are not on the base
 	Behind  int  // commits on the base that are not on the branch
+
+	Protected string // why the branch is protected, or ""
 }
 
 // repo wraps the git queries the tool needs.

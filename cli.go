@@ -46,6 +46,14 @@ Selection:
   --merged, --unmerged and --older-than replace the default stale rule and
   are combined with AND. --author and --pattern always narrow the result.
 
+Protection:
+      --protect LIST     comma-separated globs of branches never to touch
+                         (default: git config stale-branches.protect, else
+                         main,master,develop,release/*)
+
+  The current branch and the base branch are always protected. Protected
+  branches are only listed with --all.
+
 Other:
   -C DIR                 run as if started in DIR
   -h, --help             show this help
@@ -66,6 +74,7 @@ type options struct {
 	base    string
 	version bool
 	filter  filter
+	protect *string // nil when --protect was not given
 }
 
 func parseArgs(args []string) (*options, error) {
@@ -82,8 +91,19 @@ func parseArgs(args []string) (*options, error) {
 	author := fs.String("author", "", "")
 	var patterns stringList
 	fs.Var(&patterns, "pattern", "")
+	protect := fs.String("protect", "", "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "protect" {
+			opts.protect = protect
+		}
+	})
+	if opts.protect != nil {
+		if _, err := compileGlobs(splitList(*opts.protect)); err != nil {
+			return nil, fmt.Errorf("--protect: %v", err)
+		}
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected argument %q", fs.Arg(0))
@@ -158,6 +178,12 @@ func execute(opts *options, e *env) error {
 	if err != nil {
 		return err
 	}
+	globs, err := r.protectGlobs(opts.protect)
+	if err != nil {
+		return err
+	}
+	prot := &protection{base: strings.TrimPrefix(baseName, r.remote+"/"), globs: globs}
+
 	branches, err := r.listRefs("refs/heads/")
 	if err != nil {
 		return err
@@ -168,8 +194,8 @@ func execute(opts *options, e *env) error {
 	now := e.now()
 	var selected []Branch
 	for _, b := range branches {
-		// The base is trivially merged into itself; only --all shows it.
-		if b.Ref == base && !opts.filter.all {
+		b.Protected = prot.reason(b)
+		if b.Protected != "" && !opts.filter.all {
 			continue
 		}
 		if opts.filter.match(b, now) {
