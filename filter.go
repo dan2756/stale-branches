@@ -40,12 +40,49 @@ func parseAge(s string) (time.Duration, error) {
 	return time.Duration(n) * unit, nil
 }
 
+// compileGlob turns a shell-style glob into an anchored regexp. Unlike
+// path.Match, * also matches '/', so feature/* covers feature/a/b.
+// ? matches one character and [...] (or [!...]) a character class.
+func compileGlob(pattern string) (*regexp.Regexp, error) {
+	var sb strings.Builder
+	sb.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
+		case '*':
+			sb.WriteString(".*")
+		case '?':
+			sb.WriteString(".")
+		case '[':
+			end := strings.IndexByte(pattern[i+1:], ']')
+			if end < 0 {
+				return nil, fmt.Errorf("invalid pattern %q: unterminated [", pattern)
+			}
+			class := pattern[i+1 : i+1+end]
+			if rest, ok := strings.CutPrefix(class, "!"); ok {
+				class = "^" + rest
+			}
+			sb.WriteString("[" + class + "]")
+			i += end + 1
+		default:
+			sb.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	sb.WriteString("$")
+	re, err := regexp.Compile(sb.String())
+	if err != nil {
+		return nil, fmt.Errorf("invalid pattern %q", pattern)
+	}
+	return re, nil
+}
+
 // filter decides which branches are shown.
 type filter struct {
-	all       bool          // no default stale rule
-	merged    bool          // only merged branches
-	unmerged  bool          // only unmerged branches
-	olderThan time.Duration // only branches older than this; 0 means unset
+	all       bool             // no default stale rule
+	merged    bool             // only merged branches
+	unmerged  bool             // only unmerged branches
+	olderThan time.Duration    // only branches older than this; 0 means unset
+	author    *regexp.Regexp   // matched against "Name <email>"
+	patterns  []*regexp.Regexp // branch name must match one of these
 }
 
 // explicit reports whether any selection flag replaces the default rule.
@@ -55,8 +92,14 @@ func (f *filter) explicit() bool {
 
 // match reports whether b is selected. Without explicit flags a branch is
 // stale when it is merged or older than defaultStaleAge; explicit flags
-// are combined with AND.
+// are combined with AND. --author and --pattern always narrow further.
 func (f *filter) match(b Branch, now time.Time) bool {
+	if f.author != nil && !f.author.MatchString(b.Author+" <"+b.Email+">") {
+		return false
+	}
+	if len(f.patterns) > 0 && !f.matchesPattern(b.Name) {
+		return false
+	}
 	age := now.Sub(b.Date)
 	if !f.explicit() {
 		return f.all || b.Merged || age > defaultStaleAge
@@ -71,4 +114,13 @@ func (f *filter) match(b Branch, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func (f *filter) matchesPattern(name string) bool {
+	for _, re := range f.patterns {
+		if re.MatchString(name) {
+			return true
+		}
+	}
+	return false
 }

@@ -76,3 +76,77 @@ func TestFilterUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileGlob(t *testing.T) {
+	tests := []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"feature/*", "feature/login", true},
+		{"feature/*", "feature/a/b", true},
+		{"feature/*", "feature", false},
+		{"feature/*", "my-feature/x", false},
+		{"release/*", "release/1.2", true},
+		{"release/*", "release-1.2", false},
+		{"v1.?", "v1.2", true},
+		{"v1.?", "v1x2", false},
+		{"v1.?", "v1.23", false},
+		{"[ab]*", "bugfix", true},
+		{"[!ab]*", "bugfix", false},
+		{"[!ab]*", "chore", true},
+		{"main", "main", true},
+		{"main", "main2", false},
+		{"*", "anything/at/all", true},
+	}
+	for _, tt := range tests {
+		re, err := compileGlob(tt.pattern)
+		if err != nil {
+			t.Fatalf("compileGlob(%q): %v", tt.pattern, err)
+		}
+		if got := re.MatchString(tt.name); got != tt.want {
+			t.Errorf("%q matches %q = %v, want %v", tt.pattern, tt.name, got, tt.want)
+		}
+	}
+	for _, bad := range []string{"feat[ure", "[]"} {
+		if _, err := compileGlob(bad); err == nil {
+			t.Errorf("compileGlob(%q) should fail", bad)
+		}
+	}
+}
+
+func TestAuthorAndPattern(t *testing.T) {
+	r := fixture(t)
+	r.git("switch", "-q", "-c", "bugfix/crash", "main~2")
+	r.commitBy("Alice Example <alice@corp.example>", "crash.txt", 200*day)
+	r.git("switch", "-q", "main")
+
+	tests := []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"--author", "Alice"}, []string{"bugfix/crash"}},
+		{[]string{"--author", "@corp\\.example>"}, []string{"bugfix/crash"}},
+		{[]string{"--author", "^Test User"}, []string{"feature/merged", "feature/old"}},
+		{[]string{"--author", "(?i)alice", "--merged"}, nil},
+		{[]string{"--pattern", "feature/*"}, []string{"feature/merged", "feature/old"}},
+		{[]string{"--pattern", "feature/*", "--all"}, []string{"feature/merged", "feature/old", "feature/new"}},
+		{[]string{"--pattern", "bugfix/*", "--pattern", "feature/o*"}, []string{"bugfix/crash", "feature/old"}},
+		{[]string{"--pattern", "*", "--unmerged", "--author", "Test"}, []string{"feature/old", "feature/new"}},
+	}
+	for _, tt := range tests {
+		out, stderr, code := r.runTool(tt.args...)
+		if code != exitOK {
+			t.Errorf("%v: exit %d: %s", tt.args, code, stderr)
+			continue
+		}
+		if got := tableNames(out); !slices.Equal(got, tt.want) {
+			t.Errorf("%v: got %v, want %v", tt.args, got, tt.want)
+		}
+	}
+
+	for _, args := range [][]string{{"--author", "("}, {"--pattern", "feat[ure"}} {
+		if _, _, code := r.runTool(args...); code != exitUsage {
+			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
+		}
+	}
+}

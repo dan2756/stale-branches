@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -37,9 +38,13 @@ Selection:
       --unmerged         only branches not merged into the base
       --older-than AGE   only branches whose last commit is older than AGE,
                          e.g. 90d, 6w, 3mo, 1y
+      --author REGEX     only branches whose last commit author matches REGEX
+                         (matched against "Name <email>")
+      --pattern GLOB     only branches matching GLOB, e.g. 'feature/*';
+                         * also matches '/'; repeat to match any of several
 
   --merged, --unmerged and --older-than replace the default stale rule and
-  are combined with AND.
+  are combined with AND. --author and --pattern always narrow the result.
 
 Other:
   -C DIR                 run as if started in DIR
@@ -74,6 +79,9 @@ func parseArgs(args []string) (*options, error) {
 	fs.BoolVar(&opts.filter.merged, "merged", false, "")
 	fs.BoolVar(&opts.filter.unmerged, "unmerged", false, "")
 	olderThan := fs.String("older-than", "", "")
+	author := fs.String("author", "", "")
+	var patterns stringList
+	fs.Var(&patterns, "pattern", "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -90,8 +98,28 @@ func parseArgs(args []string) (*options, error) {
 		}
 		opts.filter.olderThan = age
 	}
+	if *author != "" {
+		re, err := regexp.Compile(*author)
+		if err != nil {
+			return nil, fmt.Errorf("--author: %v", err)
+		}
+		opts.filter.author = re
+	}
+	for _, p := range patterns {
+		re, err := compileGlob(p)
+		if err != nil {
+			return nil, fmt.Errorf("--pattern: %v", err)
+		}
+		opts.filter.patterns = append(opts.filter.patterns, re)
+	}
 	return opts, nil
 }
+
+// stringList is a flag that may be given more than once.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 func run(args []string, e *env) int {
 	opts, err := parseArgs(args)

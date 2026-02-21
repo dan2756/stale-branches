@@ -40,6 +40,8 @@ Use `--base develop` to compare against something else.
 | `--merged` | only branches merged into the base |
 | `--unmerged` | only branches not merged into the base |
 | `--older-than AGE` | only branches whose last commit is older than `AGE` |
+| `--author REGEX` | only branches whose last commit author matches (against `Name <email>`) |
+| `--pattern GLOB` | only branches matching `GLOB`; repeat for several |
 | `-C DIR` | run as if started in `DIR` |
 | `--version` | print the version |
 
@@ -47,6 +49,10 @@ Use `--base develop` to compare against something else.
 are combined with AND, so `--unmerged --older-than 6mo` finds abandoned work.
 Ages are a number followed by `h`, `d`, `w`, `mo` (30 days) or `y` (365 days):
 `90d`, `6w`, `3mo`, `1y`.
+
+`--author` and `--pattern` always narrow the result further. `--author` uses
+Go regexp syntax (prefix with `(?i)` for case-insensitive). In `--pattern`,
+`*` also matches `/`, so `feature/*` covers `feature/auth/login` too.
 
 Exit status is 0 on success, 1 on a git error or outside a repository, and 2
 on a usage error.
