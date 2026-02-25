@@ -47,6 +47,8 @@ Use `--base develop` to compare against something else.
 | `-y`, `--yes` | don't ask (required when stdin is not a terminal) |
 | `--force` | also delete unmerged branches (`git branch -D`) |
 | `-n`, `--dry-run` | print the git commands `--delete` would run |
+| `--json` | print JSON instead of a table |
+| `--porcelain` | print only branch names, one per line |
 | `-C DIR` | run as if started in `DIR` |
 | `--version` | print the version |
 
@@ -58,6 +60,42 @@ Ages are a number followed by `h`, `d`, `w`, `mo` (30 days) or `y` (365 days):
 `--author` and `--pattern` always narrow the result further. `--author` uses
 Go regexp syntax (prefix with `(?i)` for case-insensitive). In `--pattern`,
 `*` also matches `/`, so `feature/*` covers `feature/auth/login` too.
+
+## Output
+
+The table is colored when stdout is a terminal; set `NO_COLOR` to turn that
+off. For scripts there are two stable formats:
+
+```console
+$ stale-branches --porcelain --merged
+feature/login
+fix/typo
+
+$ stale-branches --json --pattern 'feature/*'
+{
+  "base": "main",
+  "branches": [
+    {
+      "name": "feature/login",
+      "ref": "refs/heads/feature/login",
+      "commit": "3f9c2e1d6b0a4c8e9f7a2b1c0d9e8f7a6b5c4d3e",
+      "date": "2025-10-14T09:12:44Z",
+      "age_days": 133,
+      "author": "Bob",
+      "email": "bob@example.com",
+      "status": "merged",
+      "merged": true,
+      "ahead": 0,
+      "behind": 31,
+      "current": false,
+      "protected": false
+    }
+  ]
+}
+```
+
+`note` is added for protected branches (shown with `--all`) and says why:
+`current`, `base` or `protected`.
 
 ## Deleting
 

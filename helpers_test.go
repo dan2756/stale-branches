@@ -135,13 +135,27 @@ func (r *testRepo) runTool(args ...string) (stdout, stderr string, code int) {
 // terminal when tty is true.
 func (r *testRepo) runToolInput(input string, tty bool, args ...string) (stdout, stderr string, code int) {
 	r.t.Helper()
+	return r.runWith(runOpts{stdin: input, stdinTTY: tty}, args...)
+}
+
+type runOpts struct {
+	stdin     string
+	stdinTTY  bool
+	stdoutTTY bool
+	vars      map[string]string // environment seen by the tool
+}
+
+func (r *testRepo) runWith(o runOpts, args ...string) (stdout, stderr string, code int) {
+	r.t.Helper()
 	var out, errOut bytes.Buffer
 	e := &env{
-		stdin:    strings.NewReader(input),
-		stdout:   &out,
-		stderr:   &errOut,
-		stdinTTY: tty,
-		now:      func() time.Time { return refTime },
+		stdin:     strings.NewReader(o.stdin),
+		stdout:    &out,
+		stderr:    &errOut,
+		stdinTTY:  o.stdinTTY,
+		stdoutTTY: o.stdoutTTY,
+		getenv:    func(k string) string { return o.vars[k] },
+		now:       func() time.Time { return refTime },
 	}
 	code = run(append([]string{"-C", r.dir}, args...), e)
 	return out.String(), errOut.String(), code

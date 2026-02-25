@@ -62,6 +62,12 @@ Deleting:
 
   Without --force only merged branches are deleted, with git branch -d.
 
+Output:
+      --json             print JSON instead of a table
+      --porcelain        print only branch names, one per line
+
+  The table is colored when stdout is a terminal, unless NO_COLOR is set.
+
 Other:
   -C DIR                 run as if started in DIR
   -h, --help             show this help
@@ -72,11 +78,18 @@ Exit status: 0 ok, 1 git error or not a git repository, 2 usage error.
 
 // env is everything run needs from the outside world.
 type env struct {
-	stdin    io.Reader
-	stdout   io.Writer
-	stderr   io.Writer
-	stdinTTY bool
-	now      func() time.Time
+	stdin     io.Reader
+	stdout    io.Writer
+	stderr    io.Writer
+	stdinTTY  bool
+	stdoutTTY bool
+	getenv    func(string) string
+	now       func() time.Time
+}
+
+// color reports whether the table should be colored.
+func (e *env) color() bool {
+	return e.stdoutTTY && e.getenv("NO_COLOR") == "" && e.getenv("TERM") != "dumb"
 }
 
 type options struct {
@@ -90,6 +103,8 @@ type options struct {
 	yes    bool
 	force  bool
 	dryRun bool
+
+	format outputFormat
 }
 
 // usageError is a problem with how the tool was invoked (exit status 2).
@@ -118,8 +133,18 @@ func parseArgs(args []string) (*options, error) {
 	fs.BoolVar(&opts.force, "force", false, "")
 	fs.BoolVar(&opts.dryRun, "n", false, "")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "")
+	jsonOut := fs.Bool("json", false, "")
+	porcelain := fs.Bool("porcelain", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	switch {
+	case *jsonOut && *porcelain:
+		return nil, errors.New("--json and --porcelain are mutually exclusive")
+	case *jsonOut:
+		opts.format = formatJSON
+	case *porcelain:
+		opts.format = formatPorcelain
 	}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "protect" {
@@ -211,12 +236,11 @@ func execute(opts *options, e *env) error {
 	if opts.delete {
 		return deleteBranches(r, selected, baseName, opts, e)
 	}
-	if len(selected) == 0 {
+	if len(selected) == 0 && opts.format == formatTable {
 		fmt.Fprintln(e.stderr, "no matching branches")
 		return nil
 	}
-	writeTable(e.stdout, selected, now)
-	return nil
+	return writeBranches(e.stdout, opts.format, selected, baseName, now, e.color())
 }
 
 // selectBranches loads, classifies and filters the branches. It also
@@ -277,7 +301,9 @@ func deleteBranches(r *repo, selected []Branch, baseName string, opts *options, 
 	if !opts.yes && !e.stdinTTY {
 		return &usageError{"refusing to delete without confirmation: stdin is not a terminal (use -y)"}
 	}
-	writeTable(e.stdout, del, e.now())
+	if err := writeBranches(e.stdout, opts.format, del, baseName, e.now(), e.color()); err != nil {
+		return err
+	}
 	if !opts.yes && !confirm(e.stdin, e.stderr, "Delete "+pluralBranches(len(del))+"?") {
 		fmt.Fprintln(e.stderr, "aborted")
 		return nil

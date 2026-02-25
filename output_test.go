@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,12 +41,118 @@ func TestWriteTable(t *testing.T) {
 		{Name: "wip", Date: refTime.Add(-3 * time.Hour), Author: "Bob Smith", Ahead: 104, Behind: 3},
 	}
 	var buf bytes.Buffer
-	writeTable(&buf, branches, refTime)
+	writeTable(&buf, branches, refTime, false)
 	want := "" +
 		"BRANCH         AGE           AUTHOR     STATUS    AHEAD  BEHIND\n" +
 		"feature/login  4 months ago  Alice      merged        0      12\n" +
 		"wip            3 hours ago   Bob Smith  unmerged    104       3\n"
 	if got := buf.String(); got != want {
 		t.Errorf("table:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func TestWriteTableColor(t *testing.T) {
+	branches := []Branch{
+		{Name: "feature/login", Date: refTime.Add(-120 * day), Author: "Alice", Merged: true, Behind: 12},
+		{Name: "main", Date: refTime.Add(-time.Hour), Author: "Bob", Merged: true, Current: true, Protected: "current"},
+		{Name: "wip", Date: refTime.Add(-3 * time.Hour), Author: "Bob Smith", Ahead: 104, Behind: 3},
+	}
+	var plain, colored bytes.Buffer
+	writeTable(&plain, branches, refTime, false)
+	writeTable(&colored, branches, refTime, true)
+	if strings.Contains(plain.String(), "\x1b[") {
+		t.Error("plain table contains escape codes")
+	}
+	for _, want := range []string{"\x1b[1mBRANCH\x1b[0m", "\x1b[32mmerged\x1b[0m", "\x1b[33munmerged\x1b[0m", "\x1b[2mcurrent\x1b[0m"} {
+		if !strings.Contains(colored.String(), want) {
+			t.Errorf("colored table lacks %q:\n%s", want, colored.String())
+		}
+	}
+	if got := ansiRE.ReplaceAllString(colored.String(), ""); got != plain.String() {
+		t.Errorf("colors change alignment:\n%s\nvs\n%s", got, plain.String())
+	}
+}
+
+func TestColorDetection(t *testing.T) {
+	r := fixture(t)
+	tests := []struct {
+		tty  bool
+		vars map[string]string
+		want bool
+	}{
+		{false, nil, false},
+		{true, nil, true},
+		{true, map[string]string{"NO_COLOR": "1"}, false},
+		{true, map[string]string{"TERM": "dumb"}, false},
+	}
+	for _, tt := range tests {
+		out, _, _ := r.runWith(runOpts{stdoutTTY: tt.tty, vars: tt.vars})
+		if got := strings.Contains(out, "\x1b["); got != tt.want {
+			t.Errorf("tty=%v vars=%v: colored=%v, want %v", tt.tty, tt.vars, got, tt.want)
+		}
+	}
+	// Porcelain and JSON are never colored.
+	for _, f := range []string{"--porcelain", "--json"} {
+		if out, _, _ := r.runWith(runOpts{stdoutTTY: true}, f); strings.Contains(out, "\x1b[") {
+			t.Errorf("%s output is colored", f)
+		}
+	}
+}
+
+func TestPorcelain(t *testing.T) {
+	r := fixture(t)
+	out, stderr, code := r.runTool("--porcelain")
+	if code != exitOK || out != "feature/merged\nfeature/old\n" {
+		t.Errorf("exit %d, out %q, stderr %q", code, out, stderr)
+	}
+	out, stderr, _ = r.runTool("--porcelain", "--merged", "--older-than", "1y")
+	if out != "" || stderr != "" {
+		t.Errorf("empty porcelain: out %q, stderr %q", out, stderr)
+	}
+}
+
+func TestJSON(t *testing.T) {
+	r := fixture(t)
+	out, stderr, code := r.runTool("--json", "--all")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	var got jsonOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if got.Base != "main" || len(got.Branches) != 4 {
+		t.Fatalf("base %q, %d branches", got.Base, len(got.Branches))
+	}
+	old := got.Branches[1]
+	if old.Name != "feature/old" || old.Ref != "refs/heads/feature/old" || old.Status != "unmerged" ||
+		old.Merged || old.Ahead != 1 || old.Behind != 3 || old.AgeDays != 120 ||
+		old.Author != "Test User" || old.Email != "test@example.com" || old.Protected || old.Current {
+		t.Errorf("feature/old: %+v", old)
+	}
+	if want := refTime.Add(-120 * day).Format(time.RFC3339); old.Date != want {
+		t.Errorf("date %q, want %q", old.Date, want)
+	}
+	if len(old.Commit) != 40 {
+		t.Errorf("commit %q", old.Commit)
+	}
+	base := got.Branches[3]
+	if base.Name != "main" || !base.Current || !base.Protected || base.Note != "current" {
+		t.Errorf("main: %+v", base)
+	}
+
+	// No matches still produce a valid, empty list.
+	out, _, _ = r.runTool("--json", "--merged", "--older-than", "1y")
+	if !strings.Contains(out, `"branches": []`) {
+		t.Errorf("empty JSON: %s", out)
+	}
+}
+
+func TestOutputUsage(t *testing.T) {
+	r := fixture(t)
+	if _, _, code := r.runTool("--json", "--porcelain"); code != exitUsage {
+		t.Errorf("exit %d, want %d", code, exitUsage)
 	}
 }

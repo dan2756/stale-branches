@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -48,8 +49,56 @@ func plural(n int, unit string) string {
 	return fmt.Sprintf("%d %ss", n, unit)
 }
 
-// writeTable prints branches as an aligned table.
-func writeTable(w io.Writer, branches []Branch, now time.Time) {
+// outputFormat selects how branches are printed.
+type outputFormat int
+
+const (
+	formatTable outputFormat = iota
+	formatJSON
+	formatPorcelain
+)
+
+// ANSI styles used in the table.
+const (
+	styleBold   = "1"
+	styleDim    = "2"
+	styleGreen  = "32"
+	styleYellow = "33"
+)
+
+func paint(s, style string, color bool) string {
+	if !color || s == "" {
+		return s
+	}
+	return "\x1b[" + style + "m" + s + "\x1b[0m"
+}
+
+func statusStyle(st string) string {
+	if st == "unmerged" {
+		return styleYellow
+	}
+	return styleGreen
+}
+
+// writeBranches prints branches in the requested format.
+func writeBranches(w io.Writer, format outputFormat, branches []Branch, base string, now time.Time, color bool) error {
+	switch format {
+	case formatJSON:
+		return writeJSON(w, branches, base, now)
+	case formatPorcelain:
+		for _, b := range branches {
+			fmt.Fprintln(w, b.Name)
+		}
+		return nil
+	default:
+		writeTable(w, branches, now, color)
+		return nil
+	}
+}
+
+// writeTable prints branches as an aligned table, colored when color is
+// set. Alignment is computed on the plain text.
+func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) {
 	header := []string{"BRANCH", "AGE", "AUTHOR", "STATUS", "AHEAD", "BEHIND"}
 	rightAlign := []bool{false, false, false, false, true, true}
 	withNote := false
@@ -60,20 +109,28 @@ func writeTable(w io.Writer, branches []Branch, now time.Time) {
 		header = append(header, "NOTE")
 		rightAlign = append(rightAlign, false)
 	}
+	styles := [][]string{make([]string, len(header))}
+	for i := range header {
+		styles[0][i] = styleBold
+	}
 	rows := [][]string{header}
 	for _, b := range branches {
+		st := status(b)
 		row := []string{
 			b.Name,
 			relativeAge(b.Date, now),
 			b.Author,
-			status(b),
+			st,
 			strconv.Itoa(b.Ahead),
 			strconv.Itoa(b.Behind),
 		}
+		style := []string{"", "", "", statusStyle(st), "", ""}
 		if withNote {
 			row = append(row, b.Protected)
+			style = append(style, styleDim)
 		}
 		rows = append(rows, row)
+		styles = append(styles, style)
 	}
 	widths := make([]int, len(header))
 	for _, row := range rows {
@@ -81,13 +138,14 @@ func writeTable(w io.Writer, branches []Branch, now time.Time) {
 			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
 		}
 	}
-	for _, row := range rows {
+	for r, row := range rows {
 		var sb strings.Builder
 		for i, cell := range row {
 			pad := strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell))
 			if i > 0 {
 				sb.WriteString("  ")
 			}
+			cell = paint(cell, styles[r][i], color)
 			if rightAlign[i] {
 				sb.WriteString(pad + cell)
 			} else {
@@ -96,4 +154,51 @@ func writeTable(w io.Writer, branches []Branch, now time.Time) {
 		}
 		fmt.Fprintln(w, strings.TrimRight(sb.String(), " "))
 	}
+}
+
+type jsonBranch struct {
+	Name      string `json:"name"`
+	Ref       string `json:"ref"`
+	Commit    string `json:"commit"`
+	Date      string `json:"date"`
+	AgeDays   int    `json:"age_days"`
+	Author    string `json:"author"`
+	Email     string `json:"email"`
+	Status    string `json:"status"`
+	Merged    bool   `json:"merged"`
+	Ahead     int    `json:"ahead"`
+	Behind    int    `json:"behind"`
+	Current   bool   `json:"current"`
+	Protected bool   `json:"protected"`
+	Note      string `json:"note,omitempty"`
+}
+
+type jsonOutput struct {
+	Base     string       `json:"base"`
+	Branches []jsonBranch `json:"branches"`
+}
+
+func writeJSON(w io.Writer, branches []Branch, base string, now time.Time) error {
+	out := jsonOutput{Base: base, Branches: []jsonBranch{}}
+	for _, b := range branches {
+		out.Branches = append(out.Branches, jsonBranch{
+			Name:      b.Name,
+			Ref:       b.Ref,
+			Commit:    b.Commit,
+			Date:      b.Date.UTC().Format(time.RFC3339),
+			AgeDays:   int(now.Sub(b.Date) / (24 * time.Hour)),
+			Author:    b.Author,
+			Email:     b.Email,
+			Status:    status(b),
+			Merged:    b.Merged,
+			Ahead:     b.Ahead,
+			Behind:    b.Behind,
+			Current:   b.Current,
+			Protected: b.Protected != "",
+			Note:      b.Protected,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
