@@ -4,12 +4,16 @@ package main
 import (
 	"os"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func main() {
 	os.Exit(run(os.Args[1:], &env{
-		stdout: os.Stdout,
-		stderr: os.Stderr,
-		now:    time.Now,
+		stdin:    os.Stdin,
+		stdout:   os.Stdout,
+		stderr:   os.Stderr,
+		stdinTTY: term.IsTerminal(int(os.Stdin.Fd())),
+		now:      time.Now,
 	}))
 }

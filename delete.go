@@ -1,0 +1,83 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"strings"
+)
+
+// planDeletion splits the selected branches into those that will be
+// deleted and those skipped because they are not merged and --force was
+// not given.
+func planDeletion(branches []Branch, force bool) (del, skipped []Branch) {
+	for _, b := range branches {
+		if b.Merged || force {
+			del = append(del, b)
+		} else {
+			skipped = append(skipped, b)
+		}
+	}
+	return del, skipped
+}
+
+// deleteArgs returns the git arguments that delete branches.
+func deleteArgs(branches []Branch, force bool) []string {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	args := []string{"branch", flag}
+	for _, b := range branches {
+		args = append(args, b.Name)
+	}
+	return args
+}
+
+// formatCommand renders a git invocation the way a shell would accept it.
+func formatCommand(args []string) string {
+	quoted := make([]string, 0, len(args)+1)
+	quoted = append(quoted, "git")
+	for _, a := range args {
+		quoted = append(quoted, shellQuote(a))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// shellQuote quotes s for a POSIX shell when it contains anything beyond
+// a conservative set of safe characters.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_./@%+=,:", c)) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// confirm asks a yes/no question and reports whether the answer was yes.
+// Anything but y or yes, including EOF, means no.
+func confirm(in io.Reader, out io.Writer, question string) bool {
+	fmt.Fprintf(out, "%s [y/N] ", question)
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+func pluralBranches(n int) string {
+	if n == 1 {
+		return "1 branch"
+	}
+	return fmt.Sprintf("%d branches", n)
+}

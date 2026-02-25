@@ -1,6 +1,6 @@
 # stale-branches
 
-List old or merged git branches.
+List and delete old or merged git branches.
 
 `stale-branches` shows your stale local branches with the age of their last commit,
 the last author, whether it is already merged into the base branch, and how
@@ -43,6 +43,10 @@ Use `--base develop` to compare against something else.
 | `--author REGEX` | only branches whose last commit author matches (against `Name <email>`) |
 | `--pattern GLOB` | only branches matching `GLOB`; repeat for several |
 | `--protect LIST` | comma-separated globs of branches never to touch |
+| `--delete` | delete the listed branches after asking `[y/N]` |
+| `-y`, `--yes` | don't ask (required when stdin is not a terminal) |
+| `--force` | also delete unmerged branches (`git branch -D`) |
+| `-n`, `--dry-run` | print the git commands `--delete` would run |
 | `-C DIR` | run as if started in `DIR` |
 | `--version` | print the version |
 
@@ -54,6 +58,34 @@ Ages are a number followed by `h`, `d`, `w`, `mo` (30 days) or `y` (365 days):
 `--author` and `--pattern` always narrow the result further. `--author` uses
 Go regexp syntax (prefix with `(?i)` for case-insensitive). In `--pattern`,
 `*` also matches `/`, so `feature/*` covers `feature/auth/login` too.
+
+## Deleting
+
+`--delete` shows the branches it is about to delete and asks before doing
+anything. Without a terminal on stdin it refuses unless you pass `-y`.
+
+```console
+$ stale-branches --delete
+skipping spike/parser: not merged into main (use --force to delete it)
+BRANCH         AGE           AUTHOR  STATUS  AHEAD  BEHIND
+feature/login  4 months ago  Bob     merged      0      31
+fix/typo       2 days ago    Alice   merged      0       2
+Delete 2 branches? [y/N] y
+Deleted branch feature/login (was 3f9c2e1).
+Deleted branch fix/typo (was 81d07aa).
+```
+
+Only merged branches are deleted, with `git branch -d`. `--force` deletes
+unmerged ones too, with `git branch -D`. `--dry-run` prints the exact
+command instead of running it:
+
+```console
+$ stale-branches --dry-run --force
+git branch -D spike/parser feature/login fix/typo
+```
+
+`git branch -d` checks merges against `HEAD` (or the branch's upstream), not
+the base branch, so run deletions from the base branch.
 
 ## Protected branches
 

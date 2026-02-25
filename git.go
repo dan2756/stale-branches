@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,6 +50,17 @@ func (g *gitRunner) output(args ...string) (string, error) {
 		return "", &gitError{args: args, stderr: stderr.String(), err: err}
 	}
 	return stdout.String(), nil
+}
+
+// run runs git with its output going to stdout and stderr.
+func (g *gitRunner) run(stdout, stderr io.Writer, args ...string) error {
+	cmd := g.command(args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return nil
 }
 
 // check runs a git command whose exit status is the answer: status 0 is

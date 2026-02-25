@@ -125,16 +125,36 @@ func fixture(t *testing.T) *testRepo {
 }
 
 // runTool runs the CLI against the repo and returns its output and status.
+// stdin is empty and not a terminal.
 func (r *testRepo) runTool(args ...string) (stdout, stderr string, code int) {
+	r.t.Helper()
+	return r.runToolInput("", false, args...)
+}
+
+// runToolInput is runTool with the given stdin, which counts as a
+// terminal when tty is true.
+func (r *testRepo) runToolInput(input string, tty bool, args ...string) (stdout, stderr string, code int) {
 	r.t.Helper()
 	var out, errOut bytes.Buffer
 	e := &env{
-		stdout: &out,
-		stderr: &errOut,
-		now:    func() time.Time { return refTime },
+		stdin:    strings.NewReader(input),
+		stdout:   &out,
+		stderr:   &errOut,
+		stdinTTY: tty,
+		now:      func() time.Time { return refTime },
 	}
 	code = run(append([]string{"-C", r.dir}, args...), e)
 	return out.String(), errOut.String(), code
+}
+
+// branchNames lists the repo's local branches by name.
+func (r *testRepo) branchNames() []string {
+	r.t.Helper()
+	out := r.git("for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	if out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
 }
 
 // tableNames returns the BRANCH column of a table, skipping the header.

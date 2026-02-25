@@ -54,6 +54,14 @@ Protection:
   The current branch and the base branch are always protected. Protected
   branches are only listed with --all.
 
+Deleting:
+      --delete           delete the listed branches after asking [y/N]
+  -y, --yes              do not ask; required when stdin is not a terminal
+      --force            also delete unmerged branches (git branch -D)
+  -n, --dry-run          print the git commands --delete would run and exit
+
+  Without --force only merged branches are deleted, with git branch -d.
+
 Other:
   -C DIR                 run as if started in DIR
   -h, --help             show this help
@@ -64,9 +72,11 @@ Exit status: 0 ok, 1 git error or not a git repository, 2 usage error.
 
 // env is everything run needs from the outside world.
 type env struct {
-	stdout io.Writer
-	stderr io.Writer
-	now    func() time.Time
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
+	stdinTTY bool
+	now      func() time.Time
 }
 
 type options struct {
@@ -75,7 +85,17 @@ type options struct {
 	version bool
 	filter  filter
 	protect *string // nil when --protect was not given
+
+	delete bool
+	yes    bool
+	force  bool
+	dryRun bool
 }
+
+// usageError is a problem with how the tool was invoked (exit status 2).
+type usageError struct{ msg string }
+
+func (e *usageError) Error() string { return e.msg }
 
 func parseArgs(args []string) (*options, error) {
 	opts := &options{}
@@ -92,6 +112,12 @@ func parseArgs(args []string) (*options, error) {
 	var patterns stringList
 	fs.Var(&patterns, "pattern", "")
 	protect := fs.String("protect", "", "")
+	fs.BoolVar(&opts.delete, "delete", false, "")
+	fs.BoolVar(&opts.yes, "y", false, "")
+	fs.BoolVar(&opts.yes, "yes", false, "")
+	fs.BoolVar(&opts.force, "force", false, "")
+	fs.BoolVar(&opts.dryRun, "n", false, "")
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -132,6 +158,12 @@ func parseArgs(args []string) (*options, error) {
 		}
 		opts.filter.patterns = append(opts.filter.patterns, re)
 	}
+	if opts.dryRun {
+		opts.delete = true
+	}
+	if opts.delete && opts.filter.all {
+		return nil, errors.New("--all cannot be combined with --delete")
+	}
 	return opts, nil
 }
 
@@ -157,6 +189,10 @@ func run(args []string, e *env) int {
 	}
 	if err := execute(opts, e); err != nil {
 		fmt.Fprintf(e.stderr, "stale-branches: %v\n", err)
+		var ue *usageError
+		if errors.As(err, &ue) {
+			return exitUsage
+		}
 		return exitError
 	}
 	return exitOK
@@ -167,31 +203,49 @@ func execute(opts *options, e *env) error {
 	if _, err := r.git.output("rev-parse", "--git-dir"); err != nil {
 		return notRepoError(err)
 	}
+	now := e.now()
+	selected, baseName, err := selectBranches(r, opts, now)
+	if err != nil {
+		return err
+	}
+	if opts.delete {
+		return deleteBranches(r, selected, baseName, opts, e)
+	}
+	if len(selected) == 0 {
+		fmt.Fprintln(e.stderr, "no matching branches")
+		return nil
+	}
+	writeTable(e.stdout, selected, now)
+	return nil
+}
+
+// selectBranches loads, classifies and filters the branches. It also
+// returns the base branch name.
+func selectBranches(r *repo, opts *options, now time.Time) ([]Branch, string, error) {
 	baseName := opts.base
 	if baseName == "" {
 		var err error
 		if baseName, err = r.detectBase(); err != nil {
-			return err
+			return nil, "", err
 		}
 	}
 	base, err := r.resolveBase(baseName)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	globs, err := r.protectGlobs(opts.protect)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	prot := &protection{base: strings.TrimPrefix(baseName, r.remote+"/"), globs: globs}
 
 	branches, err := r.listRefs("refs/heads/")
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	if err := r.classify(branches, base); err != nil {
-		return err
+		return nil, "", err
 	}
-	now := e.now()
 	var selected []Branch
 	for _, b := range branches {
 		b.Protected = prot.reason(b)
@@ -202,11 +256,39 @@ func execute(opts *options, e *env) error {
 			selected = append(selected, b)
 		}
 	}
-	if len(selected) == 0 {
-		fmt.Fprintln(e.stderr, "no matching branches")
+	return selected, baseName, nil
+}
+
+// deleteBranches shows what will be deleted, asks, and deletes it.
+func deleteBranches(r *repo, selected []Branch, baseName string, opts *options, e *env) error {
+	del, skipped := planDeletion(selected, opts.force)
+	for _, b := range skipped {
+		fmt.Fprintf(e.stderr, "skipping %s: not merged into %s (use --force to delete it)\n", b.Name, baseName)
+	}
+	if len(del) == 0 {
+		fmt.Fprintln(e.stderr, "nothing to delete")
 		return nil
 	}
-	writeTable(e.stdout, selected, now)
+	args := deleteArgs(del, opts.force)
+	if opts.dryRun {
+		fmt.Fprintln(e.stdout, formatCommand(args))
+		return nil
+	}
+	if !opts.yes && !e.stdinTTY {
+		return &usageError{"refusing to delete without confirmation: stdin is not a terminal (use -y)"}
+	}
+	writeTable(e.stdout, del, e.now())
+	if !opts.yes && !confirm(e.stdin, e.stderr, "Delete "+pluralBranches(len(del))+"?") {
+		fmt.Fprintln(e.stderr, "aborted")
+		return nil
+	}
+	if err := r.git.run(e.stdout, e.stderr, args...); err != nil {
+		if !opts.force {
+			fmt.Fprintf(e.stderr, "hint: git branch -d checks merges against HEAD or the branch's upstream, not %s;\n"+
+				"hint: run from %s, or use --force once you are sure\n", baseName, baseName)
+		}
+		return err
+	}
 	return nil
 }
 
