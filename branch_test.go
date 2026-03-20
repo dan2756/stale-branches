@@ -11,7 +11,7 @@ import (
 func loadBranches(t *testing.T, r *testRepo, base string) map[string]Branch {
 	t.Helper()
 	rp := &repo{git: &gitRunner{dir: r.dir}, remote: "origin"}
-	ref, err := rp.resolveBase(base)
+	ref, err := rp.resolveBase(base, false)
 	if err != nil {
 		t.Fatal(err)
 	}

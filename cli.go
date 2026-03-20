@@ -20,7 +20,7 @@ const (
 	exitUsage = 2
 )
 
-const usageText = `stale-branches - list old or merged git branches
+const usageText = `stale-branches - list and delete old or merged git branches
 
 Usage:
   stale-branches [flags]
@@ -31,47 +31,50 @@ behind the base it is. A branch is stale when it is merged into the base or
 its last commit is more than 90 days old.
 
 Selection:
-      --base BRANCH      compare against BRANCH
-                         (default: target of origin/HEAD, else main, else master)
-      --all              list every branch, not just stale ones
-      --merged           only branches merged into the base
-      --unmerged         only branches not merged into the base
-      --older-than AGE   only branches whose last commit is older than AGE,
-                         e.g. 90d, 6w, 3mo, 1y
-      --author REGEX     only branches whose last commit author matches REGEX
-                         (matched against "Name <email>")
-      --pattern GLOB     only branches matching GLOB, e.g. 'feature/*';
-                         * also matches '/'; repeat to match any of several
+      --base BRANCH        compare against BRANCH
+                           (default: target of origin/HEAD, else main, else master)
+      --remote             list the remote's branches instead of local ones
+      --remote-name NAME   remote for --remote and base detection (default origin)
+      --all                list every branch, not just stale ones
+      --merged             only branches merged into the base
+      --unmerged           only branches not merged into the base
+      --older-than AGE     only branches whose last commit is older than AGE,
+                           e.g. 90d, 6w, 3mo, 1y
+      --author REGEX       only branches whose last commit author matches REGEX
+                           (matched against "Name <email>")
+      --pattern GLOB       only branches matching GLOB, e.g. 'feature/*';
+                           * also matches '/'; repeat to match any of several
 
   --merged, --unmerged and --older-than replace the default stale rule and
   are combined with AND. --author and --pattern always narrow the result.
 
 Protection:
-      --protect LIST     comma-separated globs of branches never to touch
-                         (default: git config stale-branches.protect, else
-                         main,master,develop,release/*)
+      --protect LIST       comma-separated globs of branches never to touch
+                           (default: git config stale-branches.protect, else
+                           main,master,develop,release/*)
 
   The current branch and the base branch are always protected. Protected
   branches are only listed with --all.
 
 Deleting:
-      --delete           delete the listed branches after asking [y/N]
-  -y, --yes              do not ask; required when stdin is not a terminal
-      --force            also delete unmerged branches (git branch -D)
-  -n, --dry-run          print the git commands --delete would run and exit
+      --delete             delete the listed branches after asking [y/N]
+  -y, --yes                do not ask; required when stdin is not a terminal
+      --force              also delete unmerged branches (git branch -D)
+  -n, --dry-run            print the git commands --delete would run and exit
 
   Without --force only merged branches are deleted, with git branch -d.
+  With --remote they are deleted in one git push <remote> --delete.
 
 Output:
-      --json             print JSON instead of a table
-      --porcelain        print only branch names, one per line
+      --json               print JSON instead of a table
+      --porcelain          print only branch names, one per line
 
   The table is colored when stdout is a terminal, unless NO_COLOR is set.
 
 Other:
-  -C DIR                 run as if started in DIR
-  -h, --help             show this help
-      --version          print the version and exit
+  -C DIR                   run as if started in DIR
+  -h, --help               show this help
+      --version            print the version and exit
 
 Exit status: 0 ok, 1 git error or not a git repository, 2 usage error.
 `
@@ -93,11 +96,13 @@ func (e *env) color() bool {
 }
 
 type options struct {
-	dir     string
-	base    string
-	version bool
-	filter  filter
-	protect *string // nil when --protect was not given
+	dir        string
+	base       string
+	remoteMode bool   // list refs/remotes/<remoteName> instead of refs/heads
+	remoteName string // remote for base detection and --remote
+	version    bool
+	filter     filter
+	protect    *string // nil when --protect was not given
 
 	delete bool
 	yes    bool
@@ -118,6 +123,8 @@ func parseArgs(args []string) (*options, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.dir, "C", "", "")
 	fs.StringVar(&opts.base, "base", "", "")
+	fs.BoolVar(&opts.remoteMode, "remote", false, "")
+	fs.StringVar(&opts.remoteName, "remote-name", "origin", "")
 	fs.BoolVar(&opts.version, "version", false, "")
 	fs.BoolVar(&opts.filter.all, "all", false, "")
 	fs.BoolVar(&opts.filter.merged, "merged", false, "")
@@ -183,6 +190,9 @@ func parseArgs(args []string) (*options, error) {
 		}
 		opts.filter.patterns = append(opts.filter.patterns, re)
 	}
+	if opts.remoteName == "" {
+		return nil, errors.New("--remote-name must not be empty")
+	}
 	if opts.dryRun {
 		opts.delete = true
 	}
@@ -224,76 +234,111 @@ func run(args []string, e *env) int {
 }
 
 func execute(opts *options, e *env) error {
-	r := &repo{git: &gitRunner{dir: opts.dir}, remote: "origin"}
+	r := &repo{git: &gitRunner{dir: opts.dir}, remote: opts.remoteName}
 	if _, err := r.git.output("rev-parse", "--git-dir"); err != nil {
 		return notRepoError(err)
 	}
+	if opts.remoteMode {
+		if err := r.checkRemote(); err != nil {
+			return err
+		}
+	}
 	now := e.now()
-	selected, baseName, err := selectBranches(r, opts, now)
+	sel, err := selectBranches(r, opts, now)
 	if err != nil {
 		return err
 	}
 	if opts.delete {
-		return deleteBranches(r, selected, baseName, opts, e)
+		return deleteBranches(r, sel, opts, e)
 	}
-	if len(selected) == 0 && opts.format == formatTable {
+	if len(sel.branches) == 0 && opts.format == formatTable {
 		fmt.Fprintln(e.stderr, "no matching branches")
 		return nil
 	}
-	return writeBranches(e.stdout, opts.format, selected, baseName, now, e.color())
+	return writeBranches(e.stdout, opts.format, sel.branches, sel.meta, now, e.color())
 }
 
-// selectBranches loads, classifies and filters the branches. It also
-// returns the base branch name.
-func selectBranches(r *repo, opts *options, now time.Time) ([]Branch, string, error) {
+// selection is the result of loading and filtering branches.
+type selection struct {
+	branches []Branch
+	baseName string // base branch name, e.g. main
+	meta     listMeta
+}
+
+// selectBranches loads, classifies and filters the branches.
+func selectBranches(r *repo, opts *options, now time.Time) (*selection, error) {
 	baseName := opts.base
 	if baseName == "" {
 		var err error
 		if baseName, err = r.detectBase(); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
-	base, err := r.resolveBase(baseName)
+	baseName = strings.TrimPrefix(baseName, r.remote+"/")
+	base, err := r.resolveBase(baseName, opts.remoteMode)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	globs, err := r.protectGlobs(opts.protect)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	prot := &protection{base: strings.TrimPrefix(baseName, r.remote+"/"), globs: globs}
+	prot := &protection{base: baseName, globs: globs}
 
-	branches, err := r.listRefs("refs/heads/")
+	prefix := "refs/heads/"
+	if opts.remoteMode {
+		prefix = "refs/remotes/" + r.remote + "/"
+	}
+	branches, err := r.listRefs(prefix)
 	if err != nil {
-		return nil, "", err
+		return nil, err
+	}
+	if opts.remoteMode {
+		current, err := r.remoteCurrent()
+		if err != nil {
+			return nil, err
+		}
+		for i := range branches {
+			branches[i].Current = current[branches[i].Name]
+		}
 	}
 	if err := r.classify(branches, base); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	var selected []Branch
+	sel := &selection{baseName: baseName, meta: listMeta{base: shortRef(base)}}
+	if opts.remoteMode {
+		sel.meta.remote = r.remote
+	}
 	for _, b := range branches {
 		b.Protected = prot.reason(b)
 		if b.Protected != "" && !opts.filter.all {
 			continue
 		}
 		if opts.filter.match(b, now) {
-			selected = append(selected, b)
+			sel.branches = append(sel.branches, b)
 		}
 	}
-	return selected, baseName, nil
+	return sel, nil
 }
 
 // deleteBranches shows what will be deleted, asks, and deletes it.
-func deleteBranches(r *repo, selected []Branch, baseName string, opts *options, e *env) error {
-	del, skipped := planDeletion(selected, opts.force)
+func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
+	del, skipped := planDeletion(sel.branches, opts.force)
 	for _, b := range skipped {
-		fmt.Fprintf(e.stderr, "skipping %s: not merged into %s (use --force to delete it)\n", b.Name, baseName)
+		fmt.Fprintf(e.stderr, "skipping %s: not merged into %s (use --force to delete it)\n", b.Name, sel.meta.base)
 	}
 	if len(del) == 0 {
 		fmt.Fprintln(e.stderr, "nothing to delete")
 		return nil
 	}
-	args := deleteArgs(del, opts.force)
+	var args []string
+	question := "Delete " + pluralBranches(len(del)) + "?"
+	if opts.remoteMode {
+		args = pushDeleteArgs(r.remote, del)
+		question = "Delete " + pluralBranches(len(del)) + " from " + r.remote + "?"
+	} else {
+		args = deleteArgs(del, opts.force)
+	}
 	if opts.dryRun {
 		fmt.Fprintln(e.stdout, formatCommand(args))
 		return nil
@@ -301,17 +346,17 @@ func deleteBranches(r *repo, selected []Branch, baseName string, opts *options, 
 	if !opts.yes && !e.stdinTTY {
 		return &usageError{"refusing to delete without confirmation: stdin is not a terminal (use -y)"}
 	}
-	if err := writeBranches(e.stdout, opts.format, del, baseName, e.now(), e.color()); err != nil {
+	if err := writeBranches(e.stdout, opts.format, del, sel.meta, e.now(), e.color()); err != nil {
 		return err
 	}
-	if !opts.yes && !confirm(e.stdin, e.stderr, "Delete "+pluralBranches(len(del))+"?") {
+	if !opts.yes && !confirm(e.stdin, e.stderr, question) {
 		fmt.Fprintln(e.stderr, "aborted")
 		return nil
 	}
 	if err := r.git.run(e.stdout, e.stderr, args...); err != nil {
-		if !opts.force {
+		if !opts.force && !opts.remoteMode {
 			fmt.Fprintf(e.stderr, "hint: git branch -d checks merges against HEAD or the branch's upstream, not %s;\n"+
-				"hint: run from %s, or use --force once you are sure\n", baseName, baseName)
+				"hint: run from %s, or use --force once you are sure\n", sel.baseName, sel.baseName)
 		}
 		return err
 	}

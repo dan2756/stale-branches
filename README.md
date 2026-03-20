@@ -36,6 +36,8 @@ Use `--base develop` to compare against something else.
 | Flag | Meaning |
 | --- | --- |
 | `--base BRANCH` | branch to compare against |
+| `--remote` | list the remote's branches instead of local ones |
+| `--remote-name NAME` | remote for `--remote` and base detection (default `origin`) |
 | `--all` | list every branch, not just stale ones |
 | `--merged` | only branches merged into the base |
 | `--unmerged` | only branches not merged into the base |
@@ -124,6 +126,29 @@ git branch -D spike/parser feature/login fix/typo
 
 `git branch -d` checks merges against `HEAD` (or the branch's upstream), not
 the base branch, so run deletions from the base branch.
+
+## Remote branches
+
+`--remote` looks at `refs/remotes/origin/*` instead of your local branches and
+compares them against `origin/main` (or whatever `origin/HEAD` points to).
+Fetch first so the remote-tracking refs are current:
+
+```console
+$ git fetch --prune
+$ stale-branches --remote --merged
+BRANCH         AGE           AUTHOR  STATUS  AHEAD  BEHIND
+feature/login  4 months ago  Bob     merged      0      31
+dependabot/x   3 weeks ago   bot     merged      0       9
+
+$ stale-branches --remote --merged --dry-run
+git push origin --delete feature/login dependabot/x
+```
+
+Remote deletions go out in a single `git push <remote> --delete`. The remote
+branch matching your current branch (by name or as its upstream) is protected
+like the current branch is locally. Use `--remote-name upstream` for a
+different remote; it also picks which `<remote>/HEAD` is used to detect the
+base.
 
 ## Protected branches
 

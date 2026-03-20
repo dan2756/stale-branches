@@ -50,13 +50,13 @@ func (r *repo) detectBase() (string, error) {
 }
 
 // resolveBase turns a base branch name into a ref to compare against,
-// preferring the local branch, then the remote-tracking branch, then
-// whatever git makes of the name.
-func (r *repo) resolveBase(name string) (string, error) {
-	candidates := []string{
-		"refs/heads/" + name,
-		"refs/remotes/" + r.remote + "/" + name,
-		name,
+// preferring the local branch (the remote-tracking one with remoteMode),
+// then the other one, then whatever git makes of the name.
+func (r *repo) resolveBase(name string, remoteMode bool) (string, error) {
+	local, tracking := "refs/heads/"+name, "refs/remotes/"+r.remote+"/"+name
+	candidates := []string{local, tracking, name}
+	if remoteMode {
+		candidates = []string{tracking, local, name}
 	}
 	for _, ref := range candidates {
 		if r.git.refExists(ref) {
@@ -66,9 +66,54 @@ func (r *repo) resolveBase(name string) (string, error) {
 	return "", fmt.Errorf("base branch %q not found", name)
 }
 
-const refFormat = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(authorname)%00%(authoremail)%00%(HEAD)"
+// shortRef strips refs/heads/ or refs/remotes/ from a ref for display.
+func shortRef(ref string) string {
+	for _, p := range []string{"refs/heads/", "refs/remotes/"} {
+		if s, ok := strings.CutPrefix(ref, p); ok {
+			return s
+		}
+	}
+	return ref
+}
 
-// listRefs reads branch tips under prefix (e.g. refs/heads/).
+// checkRemote fails unless r.remote is a configured remote.
+func (r *repo) checkRemote() error {
+	out, err := r.git.output("remote")
+	if err != nil {
+		return err
+	}
+	for _, name := range strings.Fields(out) {
+		if name == r.remote {
+			return nil
+		}
+	}
+	return fmt.Errorf("no such remote %q", r.remote)
+}
+
+// remoteCurrent returns the branch names on r.remote that belong to the
+// checked-out branch: the same name, and its upstream if that lives on
+// r.remote. It is empty on a detached HEAD.
+func (r *repo) remoteCurrent() (map[string]bool, error) {
+	out, err := r.git.output("symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return nil, nil
+	}
+	head := strings.TrimSpace(out)
+	names := map[string]bool{strings.TrimPrefix(head, "refs/heads/"): true}
+	up, err := r.git.output("for-each-ref", "--format=%(upstream)", head)
+	if err != nil {
+		return nil, err
+	}
+	if name, ok := strings.CutPrefix(strings.TrimSpace(up), "refs/remotes/"+r.remote+"/"); ok && name != "" {
+		names[name] = true
+	}
+	return names, nil
+}
+
+const refFormat = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(authorname)%00%(authoremail)%00%(HEAD)%00%(symref)"
+
+// listRefs reads branch tips under prefix (e.g. refs/heads/), skipping
+// symbolic refs such as refs/remotes/origin/HEAD.
 func (r *repo) listRefs(prefix string) ([]Branch, error) {
 	out, err := r.git.output("for-each-ref", "--format="+refFormat, prefix)
 	if err != nil {
@@ -80,8 +125,11 @@ func (r *repo) listRefs(prefix string) ([]Branch, error) {
 			continue
 		}
 		f := strings.Split(line, "\x00")
-		if len(f) != 6 {
+		if len(f) != 7 {
 			return nil, fmt.Errorf("unexpected for-each-ref output: %q", line)
+		}
+		if f[6] != "" {
+			continue
 		}
 		unix, err := strconv.ParseInt(f[2], 10, 64)
 		if err != nil {

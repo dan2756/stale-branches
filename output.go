@@ -80,11 +80,17 @@ func statusStyle(st string) string {
 	return styleGreen
 }
 
+// listMeta describes what the branches were compared against.
+type listMeta struct {
+	base   string // e.g. main or origin/main
+	remote string // set when listing a remote's branches
+}
+
 // writeBranches prints branches in the requested format.
-func writeBranches(w io.Writer, format outputFormat, branches []Branch, base string, now time.Time, color bool) error {
+func writeBranches(w io.Writer, format outputFormat, branches []Branch, meta listMeta, now time.Time, color bool) error {
 	switch format {
 	case formatJSON:
-		return writeJSON(w, branches, base, now)
+		return writeJSON(w, branches, meta, now)
 	case formatPorcelain:
 		for _, b := range branches {
 			fmt.Fprintln(w, b.Name)
@@ -175,11 +181,12 @@ type jsonBranch struct {
 
 type jsonOutput struct {
 	Base     string       `json:"base"`
+	Remote   string       `json:"remote,omitempty"`
 	Branches []jsonBranch `json:"branches"`
 }
 
-func writeJSON(w io.Writer, branches []Branch, base string, now time.Time) error {
-	out := jsonOutput{Base: base, Branches: []jsonBranch{}}
+func writeJSON(w io.Writer, branches []Branch, meta listMeta, now time.Time) error {
+	out := jsonOutput{Base: meta.base, Remote: meta.remote, Branches: []jsonBranch{}}
 	for _, b := range branches {
 		out.Branches = append(out.Branches, jsonBranch{
 			Name:      b.Name,

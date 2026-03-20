@@ -34,6 +34,16 @@ func deleteArgs(branches []Branch, force bool) []string {
 	return args
 }
 
+// pushDeleteArgs returns the git arguments that delete branches from a
+// remote in a single push.
+func pushDeleteArgs(remote string, branches []Branch) []string {
+	args := []string{"push", remote, "--delete"}
+	for _, b := range branches {
+		args = append(args, b.Name)
+	}
+	return args
+}
+
 // formatCommand renders a git invocation the way a shell would accept it.
 func formatCommand(args []string) string {
 	quoted := make([]string, 0, len(args)+1)
