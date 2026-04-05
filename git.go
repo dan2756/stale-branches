@@ -42,7 +42,13 @@ func (g *gitRunner) command(args ...string) *exec.Cmd {
 
 // output runs git and returns its stdout.
 func (g *gitRunner) output(args ...string) (string, error) {
+	return g.outputEnv(nil, args...)
+}
+
+// outputEnv is output with extra environment variables.
+func (g *gitRunner) outputEnv(env []string, args ...string) (string, error) {
 	cmd := g.command(args...)
+	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -73,11 +79,20 @@ func (g *gitRunner) check(args ...string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+	if exitStatus(err) == 1 {
 		return false, nil
 	}
 	return false, &gitError{args: args, stderr: stderr.String(), err: err}
+}
+
+// exitStatus returns the exit status behind err, or -1 if git did not run
+// to completion.
+func exitStatus(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 // refExists reports whether ref names an existing commit.
@@ -90,8 +105,7 @@ func (g *gitRunner) refExists(ref string) bool {
 func (g *gitRunner) configValues(key string) ([]string, error) {
 	out, err := g.output("config", "--get-all", key)
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if exitStatus(err) == 1 {
 			return nil, nil
 		}
 		return nil, err

@@ -44,6 +44,7 @@ Use `--base develop` to compare against something else.
 | `--older-than AGE` | only branches whose last commit is older than `AGE` |
 | `--author REGEX` | only branches whose last commit author matches (against `Name <email>`) |
 | `--pattern GLOB` | only branches matching `GLOB`; repeat for several |
+| `--squash` | also treat squash- and rebase-merged branches as merged |
 | `--protect LIST` | comma-separated globs of branches never to touch |
 | `--delete` | delete the listed branches after asking `[y/N]` |
 | `-y`, `--yes` | don't ask (required when stdin is not a terminal) |
@@ -87,6 +88,7 @@ $ stale-branches --json --pattern 'feature/*'
       "email": "bob@example.com",
       "status": "merged",
       "merged": true,
+      "squashed": false,
       "ahead": 0,
       "behind": 31,
       "current": false,
@@ -96,7 +98,8 @@ $ stale-branches --json --pattern 'feature/*'
 }
 ```
 
-`note` is added for protected branches (shown with `--all`) and says why:
+`status` is `merged`, `unmerged` or (with `--squash`) `squashed`. `note` is
+added for protected branches (shown with `--all`) and says why:
 `current`, `base` or `protected`.
 
 ## Deleting
@@ -126,6 +129,34 @@ git branch -D spike/parser feature/login fix/typo
 
 `git branch -d` checks merges against `HEAD` (or the branch's upstream), not
 the base branch, so run deletions from the base branch.
+
+## Squash and rebase merges
+
+If your project merges pull requests with "squash and merge" or "rebase and
+merge", the branch tips never become ancestors of the base, so they look
+unmerged. `--squash` adds two checks for every unmerged branch and reports a
+match as `squashed`:
+
+1. **Rebased or cherry-picked:** `git cherry <base> <branch>` marks every
+   commit of the branch as already upstream.
+2. **Squashed:** a throwaway commit is built with the branch's tree on top of
+   its merge base (`git commit-tree <branch>^{tree} -p <merge-base>`), which
+   is what a squash merge of the branch would look like, and `git cherry`
+   checks whether the base already has a commit with the same patch.
+
+This is a heuristic. It misses squash merges whose diff differs from the
+branch's, for example when conflicts were resolved during the merge or the
+branch got more commits afterwards. The probe commit is never referenced by
+anything and is cleaned up by `git gc`; it has a fixed author and date, so
+repeated runs reuse the same object. Expect it to be slower on repositories
+with many branches.
+
+Squashed branches count as merged for the stale rule and `--merged`, but
+`git branch -d` cannot see that, so deleting them needs `--force`:
+
+```console
+$ stale-branches --squash --merged --delete --force
+```
 
 ## Remote branches
 

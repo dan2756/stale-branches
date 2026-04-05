@@ -11,16 +11,17 @@ import (
 
 // Branch is one branch together with what we learned about it.
 type Branch struct {
-	Name    string // short name, e.g. feature/login
-	Ref     string // full ref, e.g. refs/heads/feature/login
-	Commit  string
-	Date    time.Time // committer date of the tip
-	Author  string
-	Email   string
-	Current bool // checked out in this worktree
-	Merged  bool // tip is an ancestor of the base
-	Ahead   int  // commits on the branch that are not on the base
-	Behind  int  // commits on the base that are not on the branch
+	Name     string // short name, e.g. feature/login
+	Ref      string // full ref, e.g. refs/heads/feature/login
+	Commit   string
+	Date     time.Time // committer date of the tip
+	Author   string
+	Email    string
+	Current  bool // checked out in this worktree
+	Merged   bool // tip is an ancestor of the base
+	Squashed bool // not merged, but its changes are on the base (--squash)
+	Ahead    int  // commits on the branch that are not on the base
+	Behind   int  // commits on the base that are not on the branch
 
 	Protected string // why the branch is protected, or ""
 }
@@ -154,9 +155,13 @@ func (r *repo) listRefs(prefix string) ([]Branch, error) {
 	return branches, nil
 }
 
+// landed reports whether the branch's work is on the base, by a real
+// merge or (with --squash) a squash or rebase merge.
+func (b Branch) landed() bool { return b.Merged || b.Squashed }
+
 // classify fills in merge status and ahead/behind counts for each branch
-// relative to base.
-func (r *repo) classify(branches []Branch, base string) error {
+// relative to base. With squash it also looks for squash-merged branches.
+func (r *repo) classify(branches []Branch, base string, squash bool) error {
 	for i := range branches {
 		b := &branches[i]
 		merged, err := r.git.check("merge-base", "--is-ancestor", b.Ref, base)
@@ -166,6 +171,11 @@ func (r *repo) classify(branches []Branch, base string) error {
 		b.Merged = merged
 		if b.Behind, b.Ahead, err = r.aheadBehind(base, b.Ref); err != nil {
 			return err
+		}
+		if squash && !merged {
+			if b.Squashed, err = r.squashMerged(base, b.Ref); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

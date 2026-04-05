@@ -9,7 +9,8 @@ import (
 
 // planDeletion splits the selected branches into those that will be
 // deleted and those skipped because they are not merged and --force was
-// not given.
+// not given. Squash-merged branches need --force too: git branch -d
+// cannot tell that they are merged.
 func planDeletion(branches []Branch, force bool) (del, skipped []Branch) {
 	for _, b := range branches {
 		if b.Merged || force {

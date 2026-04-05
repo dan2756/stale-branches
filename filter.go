@@ -78,7 +78,7 @@ func compileGlob(pattern string) (*regexp.Regexp, error) {
 // filter decides which branches are shown.
 type filter struct {
 	all       bool             // no default stale rule
-	merged    bool             // only merged branches
+	merged    bool             // only merged (or squash-merged) branches
 	unmerged  bool             // only unmerged branches
 	olderThan time.Duration    // only branches older than this; 0 means unset
 	author    *regexp.Regexp   // matched against "Name <email>"
@@ -102,12 +102,12 @@ func (f *filter) match(b Branch, now time.Time) bool {
 	}
 	age := now.Sub(b.Date)
 	if !f.explicit() {
-		return f.all || b.Merged || age > defaultStaleAge
+		return f.all || b.landed() || age > defaultStaleAge
 	}
-	if f.merged && !b.Merged {
+	if f.merged && !b.landed() {
 		return false
 	}
-	if f.unmerged && b.Merged {
+	if f.unmerged && b.landed() {
 		return false
 	}
 	if f.olderThan > 0 && age <= f.olderThan {

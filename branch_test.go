@@ -19,7 +19,7 @@ func loadBranches(t *testing.T, r *testRepo, base string) map[string]Branch {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rp.classify(branches, ref); err != nil {
+	if err := rp.classify(branches, ref, false); err != nil {
 		t.Fatal(err)
 	}
 	m := map[string]Branch{}

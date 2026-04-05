@@ -12,8 +12,11 @@ import (
 
 // status is the human-readable merge state of a branch.
 func status(b Branch) string {
-	if b.Merged {
+	switch {
+	case b.Merged:
 		return "merged"
+	case b.Squashed:
+		return "squashed"
 	}
 	return "unmerged"
 }
@@ -64,6 +67,7 @@ const (
 	styleDim    = "2"
 	styleGreen  = "32"
 	styleYellow = "33"
+	styleCyan   = "36"
 )
 
 func paint(s, style string, color bool) string {
@@ -74,8 +78,11 @@ func paint(s, style string, color bool) string {
 }
 
 func statusStyle(st string) string {
-	if st == "unmerged" {
+	switch st {
+	case "unmerged":
 		return styleYellow
+	case "squashed":
+		return styleCyan
 	}
 	return styleGreen
 }
@@ -172,6 +179,7 @@ type jsonBranch struct {
 	Email     string `json:"email"`
 	Status    string `json:"status"`
 	Merged    bool   `json:"merged"`
+	Squashed  bool   `json:"squashed"`
 	Ahead     int    `json:"ahead"`
 	Behind    int    `json:"behind"`
 	Current   bool   `json:"current"`
@@ -198,6 +206,7 @@ func writeJSON(w io.Writer, branches []Branch, meta listMeta, now time.Time) err
 			Email:     b.Email,
 			Status:    status(b),
 			Merged:    b.Merged,
+			Squashed:  b.Squashed,
 			Ahead:     b.Ahead,
 			Behind:    b.Behind,
 			Current:   b.Current,

@@ -44,6 +44,8 @@ Selection:
                            (matched against "Name <email>")
       --pattern GLOB       only branches matching GLOB, e.g. 'feature/*';
                            * also matches '/'; repeat to match any of several
+      --squash             also treat squash- and rebase-merged branches as
+                           merged (slower; see README)
 
   --merged, --unmerged and --older-than replace the default stale rule and
   are combined with AND. --author and --pattern always narrow the result.
@@ -62,7 +64,8 @@ Deleting:
       --force              also delete unmerged branches (git branch -D)
   -n, --dry-run            print the git commands --delete would run and exit
 
-  Without --force only merged branches are deleted, with git branch -d.
+  Without --force only merged branches are deleted, with git branch -d;
+  squash-merged ones need --force as well.
   With --remote they are deleted in one git push <remote> --delete.
 
 Output:
@@ -103,6 +106,7 @@ type options struct {
 	version    bool
 	filter     filter
 	protect    *string // nil when --protect was not given
+	squash     bool
 
 	delete bool
 	yes    bool
@@ -133,6 +137,7 @@ func parseArgs(args []string) (*options, error) {
 	author := fs.String("author", "", "")
 	var patterns stringList
 	fs.Var(&patterns, "pattern", "")
+	fs.BoolVar(&opts.squash, "squash", false, "")
 	protect := fs.String("protect", "", "")
 	fs.BoolVar(&opts.delete, "delete", false, "")
 	fs.BoolVar(&opts.yes, "y", false, "")
@@ -302,7 +307,7 @@ func selectBranches(r *repo, opts *options, now time.Time) (*selection, error) {
 			branches[i].Current = current[branches[i].Name]
 		}
 	}
-	if err := r.classify(branches, base); err != nil {
+	if err := r.classify(branches, base, opts.squash); err != nil {
 		return nil, err
 	}
 	sel := &selection{baseName: baseName, meta: listMeta{base: shortRef(base)}}
@@ -325,7 +330,11 @@ func selectBranches(r *repo, opts *options, now time.Time) (*selection, error) {
 func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
 	del, skipped := planDeletion(sel.branches, opts.force)
 	for _, b := range skipped {
-		fmt.Fprintf(e.stderr, "skipping %s: not merged into %s (use --force to delete it)\n", b.Name, sel.meta.base)
+		if b.Squashed {
+			fmt.Fprintf(e.stderr, "skipping %s: squash-merged into %s; deleting it needs --force\n", b.Name, sel.meta.base)
+		} else {
+			fmt.Fprintf(e.stderr, "skipping %s: not merged into %s (use --force to delete it)\n", b.Name, sel.meta.base)
+		}
 	}
 	if len(del) == 0 {
 		fmt.Fprintln(e.stderr, "nothing to delete")
