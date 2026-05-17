@@ -17,11 +17,12 @@ type Branch struct {
 	Date     time.Time // committer date of the tip
 	Author   string
 	Email    string
-	Current  bool // checked out in this worktree
-	Merged   bool // tip is an ancestor of the base
-	Squashed bool // not merged, but its changes are on the base (--squash)
-	Ahead    int  // commits on the branch that are not on the base
-	Behind   int  // commits on the base that are not on the branch
+	Current  bool   // checked out in this worktree
+	Worktree string // path of the worktree that has it checked out, if any
+	Merged   bool   // tip is an ancestor of the base
+	Squashed bool   // not merged, but its changes are on the base (--squash)
+	Ahead    int    // commits on the branch that are not on the base
+	Behind   int    // commits on the base that are not on the branch
 
 	Protected string // why the branch is protected, or ""
 }
@@ -111,7 +112,7 @@ func (r *repo) remoteCurrent() (map[string]bool, error) {
 	return names, nil
 }
 
-const refFormat = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(authorname)%00%(authoremail)%00%(HEAD)%00%(symref)"
+const refFormat = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(authorname)%00%(authoremail)%00%(HEAD)%00%(symref)%00%(worktreepath)"
 
 // listRefs reads branch tips under prefix (e.g. refs/heads/), skipping
 // symbolic refs such as refs/remotes/origin/HEAD.
@@ -126,7 +127,7 @@ func (r *repo) listRefs(prefix string) ([]Branch, error) {
 			continue
 		}
 		f := strings.Split(line, "\x00")
-		if len(f) != 7 {
+		if len(f) != 8 {
 			return nil, fmt.Errorf("unexpected for-each-ref output: %q", line)
 		}
 		if f[6] != "" {
@@ -137,13 +138,14 @@ func (r *repo) listRefs(prefix string) ([]Branch, error) {
 			return nil, fmt.Errorf("bad commit date for %s: %v", f[0], err)
 		}
 		branches = append(branches, Branch{
-			Name:    strings.TrimPrefix(f[0], prefix),
-			Ref:     f[0],
-			Commit:  f[1],
-			Date:    time.Unix(unix, 0),
-			Author:  f[3],
-			Email:   strings.Trim(f[4], "<>"),
-			Current: f[5] == "*",
+			Name:     strings.TrimPrefix(f[0], prefix),
+			Ref:      f[0],
+			Commit:   f[1],
+			Date:     time.Unix(unix, 0),
+			Author:   f[3],
+			Email:    strings.Trim(f[4], "<>"),
+			Current:  f[5] == "*",
+			Worktree: f[7],
 		})
 	}
 	sort.SliceStable(branches, func(i, j int) bool {

@@ -55,8 +55,8 @@ Protection:
                            (default: git config stale-branches.protect, else
                            main,master,develop,release/*)
 
-  The current branch and the base branch are always protected. Protected
-  branches are only listed with --all.
+  The current branch, branches checked out in other worktrees and the base
+  branch are always protected. Protected branches are only listed with --all.
 
 Deleting:
       --delete             delete the listed branches after asking [y/N]

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -117,5 +119,53 @@ func TestDetachedHead(t *testing.T) {
 	}
 	if got, want := tableNames(out), []string{"feature/merged", "feature/old"}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestWorktreeBranchesAreProtected(t *testing.T) {
+	r := fixture(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	r.git("worktree", "add", "-q", wt, "feature/merged")
+
+	out, stderr, code := r.runTool("--delete", "-y", "--force")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if strings.Contains(out, "feature/merged") {
+		t.Errorf("tried to delete a branch checked out elsewhere: %q", out)
+	}
+	if !slices.Contains(r.branchNames(), "feature/merged") || slices.Contains(r.branchNames(), "feature/old") {
+		t.Errorf("branches %v", r.branchNames())
+	}
+
+	out, _, _ = r.runTool("--json", "--all")
+	var got jsonOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range got.Branches {
+		if b.Name == "feature/merged" && (b.Note != "worktree" || b.Current) {
+			t.Errorf("feature/merged: %+v", b)
+		}
+	}
+
+	// From inside the linked worktree the roles swap.
+	wtRepo := &testRepo{t: t, dir: wt}
+	out, _, _ = wtRepo.runTool("--all")
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		switch f[0] {
+		case "feature/merged":
+			if f[len(f)-1] != "current" {
+				t.Errorf("in worktree: %q", line)
+			}
+		case "main":
+			if f[len(f)-1] != "worktree" {
+				t.Errorf("in worktree: %q", line)
+			}
+		}
 	}
 }

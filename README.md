@@ -100,7 +100,7 @@ $ stale-branches --json --pattern 'feature/*'
 
 `status` is `merged`, `unmerged` or (with `--squash`) `squashed`. `note` is
 added for protected branches (shown with `--all`) and says why:
-`current`, `base` or `protected`.
+`current`, `worktree`, `base` or `protected`.
 
 ## Deleting
 
@@ -183,7 +183,8 @@ base.
 
 ## Protected branches
 
-The current branch and the base branch are always protected. On top of that,
+The current branch, branches checked out in another worktree (`git worktree`)
+and the base branch are always protected. On top of that,
 branches matching `main,master,develop,release/*` are protected by default.
 Protected branches never show up as stale; `--all` lists them with a `NOTE`
 saying why.

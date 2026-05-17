@@ -11,8 +11,9 @@ import (
 var defaultProtect = []string{"main", "master", "develop", "release/*"}
 
 // protection decides which branches must never be listed as stale or
-// deleted. The current branch and the base are always protected; the globs
-// come from --protect, git config, or defaultProtect.
+// deleted. The current branch, branches checked out in other worktrees and
+// the base are always protected; the globs come from --protect, git
+// config, or defaultProtect.
 type protection struct {
 	base  string
 	globs []*regexp.Regexp
@@ -23,6 +24,9 @@ func (p *protection) reason(b Branch) string {
 	switch {
 	case b.Current:
 		return "current"
+	case b.Worktree != "":
+		// git refuses to delete a branch another worktree has checked out.
+		return "worktree"
 	case b.Name == p.base:
 		return "base"
 	}
