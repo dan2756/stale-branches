@@ -279,11 +279,13 @@ func selectBranches(r *repo, opts *options, now time.Time) (*selection, error) {
 			return nil, err
 		}
 	}
-	baseName = strings.TrimPrefix(baseName, r.remote+"/")
 	base, err := r.resolveBase(baseName, opts.remoteMode)
 	if err != nil {
 		return nil, err
 	}
+	// Protection and hints want the plain branch name, so that
+	// --base origin/main still protects the branch called main.
+	baseName = strings.TrimPrefix(shortRef(base), r.remote+"/")
 	globs, err := r.protectGlobs(opts.protect)
 	if err != nil {
 		return nil, err
@@ -299,6 +301,9 @@ func selectBranches(r *repo, opts *options, now time.Time) (*selection, error) {
 		return nil, err
 	}
 	if opts.remoteMode {
+		if branches, err = r.remoteBranches(branches); err != nil {
+			return nil, err
+		}
 		current, err := r.remoteCurrent()
 		if err != nil {
 			return nil, err
@@ -337,6 +342,12 @@ func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
 		}
 	}
 	if len(del) == 0 {
+		// --json and --porcelain still describe the (empty) deletion.
+		if opts.format != formatTable && !opts.dryRun {
+			if err := writeBranches(e.stdout, opts.format, nil, sel.meta, e.now(), e.color()); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintln(e.stderr, "nothing to delete")
 		return nil
 	}
@@ -362,7 +373,12 @@ func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
 		fmt.Fprintln(e.stderr, "aborted")
 		return nil
 	}
-	if err := r.git.run(e.stdout, e.stderr, args...); err != nil {
+	// Keep stdout parseable for --json and --porcelain.
+	gitOut := e.stdout
+	if opts.format != formatTable {
+		gitOut = e.stderr
+	}
+	if err := r.git.run(gitOut, e.stderr, args...); err != nil {
 		if !opts.force && !opts.remoteMode {
 			fmt.Fprintf(e.stderr, "hint: git branch -d checks merges against HEAD or the branch's upstream, not %s;\n"+
 				"hint: run from %s, or use --force once you are sure\n", sel.baseName, sel.baseName)

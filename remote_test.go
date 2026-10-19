@@ -159,3 +159,111 @@ func TestRemoteName(t *testing.T) {
 		t.Errorf("empty --remote-name: exit %d", code)
 	}
 }
+
+func TestBaseRemoteTrackingBranch(t *testing.T) {
+	r, _ := remoteFixture(t)
+	// Local main has feature/old merged; origin/main does not.
+	r.merge("feature/old", 0)
+	out, stderr, code := r.runTool("--merged", "--porcelain", "--base", "origin/main")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got, want := strings.Fields(out), []string{"feature/merged", "local-only"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	out, _, _ = r.runTool("--json", "--base", "origin/main")
+	var got jsonOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Base != "origin/main" {
+		t.Errorf("base %q, want origin/main", got.Base)
+	}
+	for _, b := range got.Branches {
+		if b.Name == "main" {
+			t.Error("main should stay protected as the base")
+		}
+	}
+}
+
+func TestRemoteSkipsNonBranchRefs(t *testing.T) {
+	r, bare := remoteFixture(t)
+	// GitHub keeps refs/pull/<n>/head for every pull request, and a common
+	// refspec fetches them into refs/remotes/origin/pr/<n>.
+	if out, err := exec.Command("git", "--git-dir", bare, "update-ref", "refs/pull/7/head", "refs/heads/feature/merged").CombinedOutput(); err != nil {
+		t.Fatalf("update-ref: %v\n%s", err, out)
+	}
+	r.git("config", "--add", "remote.origin.fetch", "+refs/pull/*/head:refs/remotes/origin/pr/*")
+	r.git("fetch", "-q", "origin")
+	if out := r.git("branch", "-r"); !strings.Contains(out, "origin/pr/7") {
+		t.Fatalf("pull request ref not fetched: %q", out)
+	}
+
+	out, _, _ := r.runTool("--remote", "--porcelain")
+	if got, want := strings.Fields(out), []string{"feature/merged", "feature/old"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	out, _, _ = r.runTool("--remote", "-n")
+	if out != "git push origin --delete feature/merged\n" {
+		t.Errorf("dry run %q", out)
+	}
+	if _, stderr, code := r.runTool("--remote", "--merged", "--delete", "-y"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got, want := bareBranches(t, bare), []string{"feature/new", "feature/old", "main"}; !slices.Equal(got, want) {
+		t.Errorf("remote branches %v, want %v", got, want)
+	}
+}
+
+func TestFetchSource(t *testing.T) {
+	tests := []struct {
+		spec, dst, src string
+		ok             bool
+	}{
+		{"+refs/heads/*:refs/remotes/origin/*", "refs/remotes/origin/feature/x", "refs/heads/feature/x", true},
+		{"+refs/heads/*:refs/remotes/origin/*", "refs/remotes/upstream/x", "", false},
+		{"+refs/pull/*/head:refs/remotes/origin/pr/*", "refs/remotes/origin/pr/7", "refs/pull/7/head", true},
+		{"+refs/pull/*/head:refs/remotes/origin/pr/*", "refs/remotes/origin/main", "", false},
+		{"refs/heads/main:refs/remotes/origin/main", "refs/remotes/origin/main", "refs/heads/main", true},
+		{"refs/heads/main:refs/remotes/origin/main", "refs/remotes/origin/dev", "", false},
+		{"^refs/heads/tmp/*", "refs/remotes/origin/tmp/x", "", false},
+		{"refs/heads/main", "refs/remotes/origin/main", "", false},
+	}
+	for _, tt := range tests {
+		src, ok := fetchSource(tt.spec, tt.dst)
+		if ok != tt.ok || ok && src != tt.src {
+			t.Errorf("fetchSource(%q, %q) = %q, %v; want %q, %v", tt.spec, tt.dst, src, ok, tt.src, tt.ok)
+		}
+	}
+}
+
+func TestBaseHEAD(t *testing.T) {
+	r, _ := remoteFixture(t)
+	// HEAD has feature/old merged; origin/HEAD (origin/main) does not.
+	r.git("switch", "-q", "-c", "develop")
+	r.merge("feature/old", 0)
+	out, stderr, code := r.runTool("--base", "HEAD", "--merged", "--porcelain")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got, want := strings.Fields(out), []string{"feature/merged", "local-only", "feature/old"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	out, _, _ = r.runTool("--base", "HEAD", "--json")
+	var got jsonOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Base != "HEAD" {
+		t.Errorf("base %q, want HEAD", got.Base)
+	}
+
+	for name, want := range map[string]bool{
+		"HEAD": true, "HEAD~2": true, "HEAD^": true, "HEAD@{1}": true,
+		"origin/HEAD": false, "HEADS": false, "main~1": false,
+	} {
+		if got := isHeadRevision(name); got != want {
+			t.Errorf("isHeadRevision(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -38,8 +38,10 @@ type repo struct {
 func (r *repo) detectBase() (string, error) {
 	head := "refs/remotes/" + r.remote + "/HEAD"
 	if out, err := r.git.output("symbolic-ref", "--quiet", head); err == nil {
+		// <remote>/HEAD is left dangling when the remote renames its
+		// default branch, e.g. master to main; fall back then.
 		target := strings.TrimSpace(out)
-		if name, ok := strings.CutPrefix(target, "refs/remotes/"+r.remote+"/"); ok && name != "" {
+		if name, ok := strings.CutPrefix(target, "refs/remotes/"+r.remote+"/"); ok && name != "" && r.git.refExists(target) {
 			return name, nil
 		}
 	}
@@ -53,12 +55,17 @@ func (r *repo) detectBase() (string, error) {
 
 // resolveBase turns a base branch name into a ref to compare against,
 // preferring the local branch (the remote-tracking one with remoteMode),
-// then the other one, then whatever git makes of the name.
+// then the other one, then whatever git makes of the name. HEAD and
+// revisions relative to it, such as HEAD~2, are taken as they are, so
+// that they do not resolve to <remote>/HEAD.
 func (r *repo) resolveBase(name string, remoteMode bool) (string, error) {
 	local, tracking := "refs/heads/"+name, "refs/remotes/"+r.remote+"/"+name
 	candidates := []string{local, tracking, name}
 	if remoteMode {
 		candidates = []string{tracking, local, name}
+	}
+	if isHeadRevision(name) {
+		candidates = []string{name}
 	}
 	for _, ref := range candidates {
 		if r.git.refExists(ref) {
@@ -66,6 +73,15 @@ func (r *repo) resolveBase(name string, remoteMode bool) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("base branch %q not found", name)
+}
+
+// isHeadRevision reports whether name is HEAD or a revision relative to
+// it, such as HEAD~2 or HEAD^.
+func isHeadRevision(name string) bool {
+	if i := strings.IndexAny(name, "~^@"); i >= 0 {
+		name = name[:i]
+	}
+	return name == "HEAD"
 }
 
 // shortRef strips refs/heads/ or refs/remotes/ from a ref for display.
@@ -110,6 +126,53 @@ func (r *repo) remoteCurrent() (map[string]bool, error) {
 		names[name] = true
 	}
 	return names, nil
+}
+
+// remoteBranches keeps the remote-tracking refs that the fetch refspecs
+// of r.remote map from the remote's branch of the same name, which is what
+// git push <remote> --delete <name> deletes. Refs that a refspec maps from
+// anything else, such as pull requests fetched with
+// +refs/pull/*/head:refs/remotes/origin/pr/*, are not the remote's
+// branches, even though +refs/heads/*:refs/remotes/origin/* matches them too.
+func (r *repo) remoteBranches(branches []Branch) ([]Branch, error) {
+	specs, err := r.git.configValues("remote." + r.remote + ".fetch")
+	if err != nil {
+		return nil, err
+	}
+	var kept []Branch
+	for _, b := range branches {
+		branch := false
+		for _, spec := range specs {
+			src, ok := fetchSource(spec, b.Ref)
+			if !ok {
+				continue
+			}
+			if branch = src == "refs/heads/"+b.Name; !branch {
+				break
+			}
+		}
+		if branch {
+			kept = append(kept, b)
+		}
+	}
+	return kept, nil
+}
+
+// fetchSource returns the remote ref that the fetch refspec spec, e.g.
+// +refs/heads/*:refs/remotes/origin/*, stores in the local ref dst.
+func fetchSource(spec, dst string) (string, bool) {
+	src, pattern, ok := strings.Cut(strings.TrimPrefix(spec, "+"), ":")
+	if !ok || strings.HasPrefix(src, "^") {
+		return "", false
+	}
+	prefix, suffix, glob := strings.Cut(pattern, "*")
+	if !glob {
+		return src, pattern == dst
+	}
+	if len(dst) < len(prefix)+len(suffix) || !strings.HasPrefix(dst, prefix) || !strings.HasSuffix(dst, suffix) {
+		return "", false
+	}
+	return strings.Replace(src, "*", dst[len(prefix):len(dst)-len(suffix)], 1), true
 }
 
 const refFormat = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(authorname)%00%(authoremail)%00%(HEAD)%00%(symref)%00%(worktreepath)"

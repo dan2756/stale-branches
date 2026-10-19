@@ -51,6 +51,22 @@ func TestWriteTable(t *testing.T) {
 	}
 }
 
+func TestWriteTableWideCharacters(t *testing.T) {
+	branches := []Branch{
+		{Name: "feature/日本語", Date: refTime.Add(-120 * day), Author: "山田", Merged: true, Behind: 12},
+		{Name: "feature/login", Date: refTime.Add(-3 * time.Hour), Author: "Bob", Ahead: 1, Behind: 3},
+	}
+	var buf bytes.Buffer
+	writeTable(&buf, branches, refTime, false)
+	want := "" +
+		"BRANCH          AGE           AUTHOR  STATUS    AHEAD  BEHIND\n" +
+		"feature/日本語  4 months ago  山田    merged        0      12\n" +
+		"feature/login   3 hours ago   Bob     unmerged      1       3\n"
+	if got := buf.String(); got != want {
+		t.Errorf("table:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func TestWriteTableColor(t *testing.T) {
@@ -69,6 +85,9 @@ func TestWriteTableColor(t *testing.T) {
 		if !strings.Contains(colored.String(), want) {
 			t.Errorf("colored table lacks %q:\n%s", want, colored.String())
 		}
+	}
+	if strings.Contains(colored.String(), "\x1b[m") {
+		t.Errorf("unstyled cells are wrapped in escape codes:\n%q", colored.String())
 	}
 	if got := ansiRE.ReplaceAllString(colored.String(), ""); got != plain.String() {
 		t.Errorf("colors change alignment:\n%s\nvs\n%s", got, plain.String())

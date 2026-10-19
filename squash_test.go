@@ -101,6 +101,34 @@ func TestSquashDelete(t *testing.T) {
 	}
 }
 
+func TestSquashIgnoresEmptyChanges(t *testing.T) {
+	r := fixture(t)
+	// A change and its revert, and a branch of empty commits: neither has
+	// anything that could have landed on main.
+	r.git("switch", "-q", "-c", "experiment")
+	r.commit("idea.txt", 10*day)
+	r.git("rm", "-q", "idea.txt")
+	r.gitEnv(dateEnv(9*day), "commit", "-q", "-m", "park idea")
+	r.git("switch", "-q", "-c", "empty", "main")
+	r.gitEnv(dateEnv(8*day), "commit", "-q", "--allow-empty", "-m", "empty")
+	r.git("switch", "-q", "main")
+	// An unrelated empty commit on main, e.g. to retrigger CI.
+	r.gitEnv(dateEnv(0), "commit", "-q", "--allow-empty", "-m", "trigger CI")
+
+	out, _, _ := r.runTool("--porcelain", "--squash", "--unmerged", "--pattern", "experiment", "--pattern", "empty")
+	if got, want := strings.Fields(out), []string{"experiment", "empty"}; !slices.Equal(got, want) {
+		t.Errorf("--unmerged: got %v, want %v", got, want)
+	}
+	if _, stderr, code := r.runTool("--squash", "--merged", "--delete", "-y", "--force"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, name := range []string{"experiment", "empty"} {
+		if !slices.Contains(r.branchNames(), name) {
+			t.Errorf("%s was deleted", name)
+		}
+	}
+}
+
 func TestSquashProbeNeedsNoIdentity(t *testing.T) {
 	r := squashFixture(t)
 	r.git("config", "--unset", "user.name")

@@ -15,6 +15,7 @@ func TestParseAge(t *testing.T) {
 		"3mo":  90 * day,
 		"1y":   365 * day,
 		"100d": 100 * day,
+		"292y": 292 * 365 * day,
 	}
 	for in, want := range good {
 		got, err := parseAge(in)
@@ -29,6 +30,12 @@ func TestParseAge(t *testing.T) {
 	}
 	if _, err := parseAge("3m"); err == nil || !strings.Contains(err.Error(), `"mo"`) {
 		t.Errorf("3m should suggest mo, got %v", err)
+	}
+	// Ages beyond what a time.Duration holds must not wrap around.
+	for _, in := range []string{"293y", "300y", "600y", "3000000h", "99999999999999999999d"} {
+		if _, err := parseAge(in); err == nil || !strings.Contains(err.Error(), "too large") {
+			t.Errorf("parseAge(%q): got %v, want a too large error", in, err)
+		}
 	}
 }
 
@@ -69,6 +76,7 @@ func TestFilterUsageErrors(t *testing.T) {
 		{"--merged", "--unmerged"},
 		{"--older-than", "soon"},
 		{"--older-than", "3m"},
+		{"--older-than", "300y"},
 	} {
 		_, stderr, code := r.runTool(args...)
 		if code != exitUsage {
@@ -117,7 +125,7 @@ func TestCompileGlob(t *testing.T) {
 func TestAuthorAndPattern(t *testing.T) {
 	r := fixture(t)
 	r.git("switch", "-q", "-c", "bugfix/crash", "main~2")
-	r.commitBy("Alice Example <alice@corp.example>", "crash.txt", 200*day)
+	r.commitBy("Alice Example <alice+dev@corp.example>", "crash.txt", 200*day)
 	r.git("switch", "-q", "main")
 
 	tests := []struct {
@@ -126,6 +134,7 @@ func TestAuthorAndPattern(t *testing.T) {
 	}{
 		{[]string{"--author", "Alice"}, []string{"bugfix/crash"}},
 		{[]string{"--author", "@corp\\.example>"}, []string{"bugfix/crash"}},
+		{[]string{"--author", `\Qalice+dev@corp.example\E`}, []string{"bugfix/crash"}},
 		{[]string{"--author", "^Test User"}, []string{"feature/merged", "feature/old"}},
 		{[]string{"--author", "(?i)alice", "--merged"}, nil},
 		{[]string{"--pattern", "feature/*"}, []string{"feature/merged", "feature/old"}},

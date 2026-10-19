@@ -23,7 +23,26 @@ var probeEnv = []string{
 // merge of ref would look like, and ask git cherry whether base already
 // has a commit with the same patch. It misses squash merges whose diff
 // differs from the branch's, e.g. after resolving conflicts.
+//
+// A branch whose tree equals its merge base's (only empty commits, or a
+// change and its revert) is never reported: its empty patch would match
+// any unrelated empty commit on base.
 func (r *repo) squashMerged(base, ref string) (bool, error) {
+	mb, err := r.git.output("merge-base", base, ref)
+	if err != nil && exitStatus(err) != 1 { // 1: no common history
+		return false, err
+	}
+	mb = strings.TrimSpace(mb)
+	if mb != "" {
+		trees, err := r.git.output("rev-parse", mb+"^{tree}", ref+"^{tree}")
+		if err != nil {
+			return false, err
+		}
+		if t := strings.Fields(trees); len(t) == 2 && t[0] == t[1] {
+			return false, nil
+		}
+	}
+
 	out, err := r.git.output("cherry", base, ref)
 	if err != nil {
 		return false, err
@@ -31,16 +50,11 @@ func (r *repo) squashMerged(base, ref string) (bool, error) {
 	if allApplied(out) {
 		return true, nil
 	}
-
-	mb, err := r.git.output("merge-base", base, ref)
-	if err != nil {
-		if exitStatus(err) == 1 {
-			return false, nil // no common history
-		}
-		return false, err
+	if mb == "" {
+		return false, nil
 	}
 	probe, err := r.git.outputEnv(probeEnv, "commit-tree", "--no-gpg-sign",
-		ref+"^{tree}", "-p", strings.TrimSpace(mb), "-m", "stale-branches squash probe")
+		ref+"^{tree}", "-p", mb, "-m", "stale-branches squash probe")
 	if err != nil {
 		return false, err
 	}

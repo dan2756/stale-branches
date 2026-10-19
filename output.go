@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"golang.org/x/text/width"
 )
 
 // status is the human-readable merge state of a branch.
@@ -71,7 +72,7 @@ const (
 )
 
 func paint(s, style string, color bool) string {
-	if !color || s == "" {
+	if !color || s == "" || style == "" {
 		return s
 	}
 	return "\x1b[" + style + "m" + s + "\x1b[0m"
@@ -148,13 +149,13 @@ func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) {
 	widths := make([]int, len(header))
 	for _, row := range rows {
 		for i, cell := range row {
-			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
+			widths[i] = max(widths[i], displayWidth(cell))
 		}
 	}
 	for r, row := range rows {
 		var sb strings.Builder
 		for i, cell := range row {
-			pad := strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell))
+			pad := strings.Repeat(" ", widths[i]-displayWidth(cell))
 			if i > 0 {
 				sb.WriteString("  ")
 			}
@@ -167,6 +168,21 @@ func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) {
 		}
 		fmt.Fprintln(w, strings.TrimRight(sb.String(), " "))
 	}
+}
+
+// displayWidth is the number of terminal columns s takes up: wide and
+// fullwidth characters, e.g. CJK, take two.
+func displayWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 type jsonBranch struct {

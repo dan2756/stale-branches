@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ func parseAge(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid age %q (want a number and h, d, w, mo or y, e.g. 90d)%s", s, hint)
 	}
 	n, err := strconv.Atoi(m[1])
-	if err != nil || n <= 0 {
+	if err == nil && n <= 0 {
 		return 0, fmt.Errorf("invalid age %q: must be a positive number", s)
 	}
 	const day = 24 * time.Hour
@@ -37,6 +38,10 @@ func parseAge(s string) (time.Duration, error) {
 		"mo": 30 * day,
 		"y":  365 * day,
 	}[m[2]]
+	// A time.Duration holds about 292 years.
+	if err != nil || time.Duration(n) > math.MaxInt64/unit {
+		return 0, fmt.Errorf("invalid age %q: too large (the limit is about 292 years)", s)
+	}
 	return time.Duration(n) * unit, nil
 }
 

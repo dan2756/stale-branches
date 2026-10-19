@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -172,5 +173,41 @@ func TestDeleteFromOtherBranchHints(t *testing.T) {
 	}
 	if !slices.Contains(r.branchNames(), "feature/merged") {
 		t.Error("feature/merged should still exist")
+	}
+}
+
+func TestDeleteKeepsMachineOutputClean(t *testing.T) {
+	r := fixture(t)
+	out, stderr, code := r.runTool("--delete", "-y", "--porcelain")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if out != "feature/merged\n" {
+		t.Errorf("stdout %q", out)
+	}
+	if !strings.Contains(stderr, "Deleted branch feature/merged") {
+		t.Errorf("stderr %q", stderr)
+	}
+}
+
+func TestDeleteNothingKeepsMachineOutput(t *testing.T) {
+	r := fixture(t)
+	// Every selected branch is unmerged, so nothing is deleted.
+	out, stderr, code := r.runTool("--delete", "-y", "--json", "--unmerged")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	var got jsonOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%q", err, out)
+	}
+	if got.Base != "main" || len(got.Branches) != 0 {
+		t.Errorf("got %+v, want an empty list against main", got)
+	}
+	if !strings.Contains(stderr, "nothing to delete") {
+		t.Errorf("stderr %q", stderr)
+	}
+	if out, _, _ := r.runTool("--delete", "-y", "--porcelain", "--unmerged"); out != "" {
+		t.Errorf("porcelain stdout %q", out)
 	}
 }

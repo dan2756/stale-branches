@@ -101,6 +101,17 @@ func TestDetectBase(t *testing.T) {
 		r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 		assertBase(t, r, "trunk")
 	})
+	t.Run("dangling origin HEAD", func(t *testing.T) {
+		// What a clone is left with after the remote renames master to main.
+		r := newTestRepo(t)
+		r.commit("a", day)
+		r.git("update-ref", "refs/remotes/origin/main", "main")
+		r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
+		assertBase(t, r, "main")
+		if _, stderr, code := r.runTool("--all"); code != exitOK {
+			t.Errorf("exit %d: %s", code, stderr)
+		}
+	})
 	t.Run("none", func(t *testing.T) {
 		r := newTestRepo(t)
 		r.commit("a", day)
