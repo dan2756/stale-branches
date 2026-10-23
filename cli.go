@@ -366,7 +366,7 @@ func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
 		args = deleteArgs(del, opts.force)
 	}
 	if opts.dryRun {
-		if _, err := fmt.Fprintln(e.stdout, formatCommand(args)); err != nil {
+		if _, err := fmt.Fprintln(e.stdout, formatCommand(r.git.dir, args)); err != nil {
 			return err
 		}
 		return nil

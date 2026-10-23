@@ -46,9 +46,14 @@ func pushDeleteArgs(remote string, branches []Branch) []string {
 }
 
 // formatCommand renders a git invocation the way a shell would accept it.
-func formatCommand(args []string) string {
-	quoted := make([]string, 0, len(args)+1)
+// dir is the repository -C was given; it is included so the command deletes
+// in that repository even when the shell's cwd is somewhere else.
+func formatCommand(dir string, args []string) string {
+	quoted := make([]string, 0, len(args)+3)
 	quoted = append(quoted, "git")
+	if dir != "" {
+		quoted = append(quoted, "-C", shellQuote(dir))
+	}
 	for _, a := range args {
 		quoted = append(quoted, shellQuote(a))
 	}
