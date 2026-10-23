@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -81,7 +82,7 @@ func TestSquashDetection(t *testing.T) {
 func TestSquashDelete(t *testing.T) {
 	r := squashFixture(t)
 	out, stderr, _ := r.runTool("--squash", "-n")
-	if out != "git branch -d feature/merged\n" {
+	if out != fmt.Sprintf("git -C %s branch -d feature/merged\n", r.dir) {
 		t.Errorf("dry run %q", out)
 	}
 	if !strings.Contains(stderr, "skipping feature/squashed: squash-merged into main; deleting it needs --force") {
@@ -89,7 +90,7 @@ func TestSquashDelete(t *testing.T) {
 	}
 
 	out, _, _ = r.runTool("--squash", "--merged", "-n", "--force")
-	if out != "git branch -D feature/merged feature/squashed feature/rebased\n" {
+	if out != fmt.Sprintf("git -C %s branch -D feature/merged feature/squashed feature/rebased\n", r.dir) {
 		t.Errorf("dry run --force %q", out)
 	}
 

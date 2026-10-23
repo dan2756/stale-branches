@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -106,14 +107,14 @@ func TestRemoteCurrentIsProtected(t *testing.T) {
 func TestRemoteDryRunAndDelete(t *testing.T) {
 	r, bare := remoteFixture(t)
 	out, stderr, _ := r.runTool("--remote", "-n")
-	if out != "git push origin --delete feature/merged\n" {
+	if out != fmt.Sprintf("git -C %s push origin --delete feature/merged\n", r.dir) {
 		t.Errorf("dry run %q", out)
 	}
 	if !strings.Contains(stderr, "skipping feature/old: not merged into origin/main") {
 		t.Errorf("stderr %q", stderr)
 	}
 	out, _, _ = r.runTool("--remote", "-n", "--force")
-	if out != "git push origin --delete feature/merged feature/old\n" {
+	if out != fmt.Sprintf("git -C %s push origin --delete feature/merged feature/old\n", r.dir) {
 		t.Errorf("dry run --force %q", out)
 	}
 
@@ -147,7 +148,7 @@ func TestRemoteName(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	out, _, _ = r.runTool("--remote", "--remote-name=upstream", "-n", "--force")
-	if out != "git push upstream --delete feature/old\n" {
+	if out != fmt.Sprintf("git -C %s push upstream --delete feature/old\n", r.dir) {
 		t.Errorf("dry run %q", out)
 	}
 
@@ -204,7 +205,7 @@ func TestRemoteSkipsNonBranchRefs(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	out, _, _ = r.runTool("--remote", "-n")
-	if out != "git push origin --delete feature/merged\n" {
+	if out != fmt.Sprintf("git -C %s push origin --delete feature/merged\n", r.dir) {
 		t.Errorf("dry run %q", out)
 	}
 	if _, stderr, code := r.runTool("--remote", "--merged", "--delete", "-y"); code != exitOK {

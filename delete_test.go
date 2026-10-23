@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -15,10 +16,10 @@ func TestDryRun(t *testing.T) {
 		want    string
 		skipped []string
 	}{
-		{[]string{"--dry-run"}, "git branch -d feature/merged\n", []string{"feature/old"}},
-		{[]string{"--delete", "-n"}, "git branch -d feature/merged\n", []string{"feature/old"}},
-		{[]string{"-n", "--force"}, "git branch -D feature/merged feature/old\n", nil},
-		{[]string{"-n", "--unmerged", "--force"}, "git branch -D feature/old feature/new\n", nil},
+		{[]string{"--dry-run"}, fmt.Sprintf("git -C %s branch -d feature/merged\n", r.dir), []string{"feature/old"}},
+		{[]string{"--delete", "-n"}, fmt.Sprintf("git -C %s branch -d feature/merged\n", r.dir), []string{"feature/old"}},
+		{[]string{"-n", "--force"}, fmt.Sprintf("git -C %s branch -D feature/merged feature/old\n", r.dir), nil},
+		{[]string{"-n", "--unmerged", "--force"}, fmt.Sprintf("git -C %s branch -D feature/old feature/new\n", r.dir), nil},
 		{[]string{"-n", "--unmerged"}, "", []string{"feature/old", "feature/new"}},
 	}
 	for _, tt := range tests {
@@ -156,8 +157,11 @@ func TestShellQuote(t *testing.T) {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := formatCommand([]string{"branch", "-d", "a&b"}); got != "git branch -d 'a&b'" {
+	if got := formatCommand("", []string{"branch", "-d", "a&b"}); got != "git branch -d 'a&b'" {
 		t.Errorf("formatCommand = %q", got)
+	}
+	if got := formatCommand("my repo", []string{"branch", "-d", "a"}); got != "git -C 'my repo' branch -d a" {
+		t.Errorf("formatCommand dir = %q", got)
 	}
 }
 
