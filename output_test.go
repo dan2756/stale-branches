@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,7 +43,9 @@ func TestWriteTable(t *testing.T) {
 		{Name: "wip", Date: refTime.Add(-3 * time.Hour), Author: "Bob Smith", Ahead: 104, Behind: 3},
 	}
 	var buf bytes.Buffer
-	writeTable(&buf, branches, refTime, false)
+	if err := writeTable(&buf, branches, refTime, false); err != nil {
+		t.Fatal(err)
+	}
 	want := "" +
 		"BRANCH         AGE           AUTHOR     STATUS    AHEAD  BEHIND\n" +
 		"feature/login  4 months ago  Alice      merged        0      12\n" +
@@ -57,7 +61,9 @@ func TestWriteTableWideCharacters(t *testing.T) {
 		{Name: "feature/login", Date: refTime.Add(-3 * time.Hour), Author: "Bob", Ahead: 1, Behind: 3},
 	}
 	var buf bytes.Buffer
-	writeTable(&buf, branches, refTime, false)
+	if err := writeTable(&buf, branches, refTime, false); err != nil {
+		t.Fatal(err)
+	}
 	want := "" +
 		"BRANCH          AGE           AUTHOR  STATUS    AHEAD  BEHIND\n" +
 		"feature/日本語  4 months ago  山田    merged        0      12\n" +
@@ -76,8 +82,12 @@ func TestWriteTableColor(t *testing.T) {
 		{Name: "wip", Date: refTime.Add(-3 * time.Hour), Author: "Bob Smith", Ahead: 104, Behind: 3},
 	}
 	var plain, colored bytes.Buffer
-	writeTable(&plain, branches, refTime, false)
-	writeTable(&colored, branches, refTime, true)
+	if err := writeTable(&plain, branches, refTime, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTable(&colored, branches, refTime, true); err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(plain.String(), "\x1b[") {
 		t.Error("plain table contains escape codes")
 	}
@@ -173,5 +183,45 @@ func TestOutputUsage(t *testing.T) {
 	r := fixture(t)
 	if _, _, code := r.runTool("--json", "--porcelain"); code != exitUsage {
 		t.Errorf("exit %d, want %d", code, exitUsage)
+	}
+}
+
+// failWriter fails every write, as a pipe does after the reader closes.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestWriteBranchesReportsWriteError(t *testing.T) {
+	branches := []Branch{{Name: "feature/old", Date: refTime, Author: "Ada"}}
+	for _, format := range []outputFormat{formatTable, formatPorcelain, formatJSON} {
+		err := writeBranches(failWriter{}, format, branches, listMeta{base: "main"}, refTime, false)
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Errorf("format %d: got %v, want closed pipe", format, err)
+		}
+	}
+}
+
+func TestWriteErrorExitStatus(t *testing.T) {
+	r := fixture(t)
+	cases := [][]string{
+		nil,
+		{"--porcelain"},
+		{"--json"},
+		{"--dry-run"},
+		{"--help"},
+		{"--version"},
+	}
+	for _, args := range cases {
+		var errOut bytes.Buffer
+		code := run(append([]string{"-C", r.dir}, args...), &env{
+			stdin:  strings.NewReader(""),
+			stdout: failWriter{},
+			stderr: &errOut,
+			getenv: func(string) string { return "" },
+			now:    func() time.Time { return refTime },
+		})
+		if code != exitError {
+			t.Errorf("%v: exit %d, want %d (stderr %q)", args, code, exitError, errOut.String())
+		}
 	}
 }

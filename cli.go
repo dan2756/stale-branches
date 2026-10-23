@@ -216,7 +216,10 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 func run(args []string, e *env) int {
 	opts, err := parseArgs(args)
 	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(e.stdout, usageText)
+		if _, err := fmt.Fprint(e.stdout, usageText); err != nil {
+			fmt.Fprintf(e.stderr, "stale-branches: %v\n", err)
+			return exitError
+		}
 		return exitOK
 	}
 	if err != nil {
@@ -224,7 +227,10 @@ func run(args []string, e *env) int {
 		return exitUsage
 	}
 	if opts.version {
-		fmt.Fprintf(e.stdout, "stale-branches %s\n", buildVersion())
+		if _, err := fmt.Fprintf(e.stdout, "stale-branches %s\n", buildVersion()); err != nil {
+			fmt.Fprintf(e.stderr, "stale-branches: %v\n", err)
+			return exitError
+		}
 		return exitOK
 	}
 	if err := execute(opts, e); err != nil {
@@ -360,7 +366,9 @@ func deleteBranches(r *repo, sel *selection, opts *options, e *env) error {
 		args = deleteArgs(del, opts.force)
 	}
 	if opts.dryRun {
-		fmt.Fprintln(e.stdout, formatCommand(args))
+		if _, err := fmt.Fprintln(e.stdout, formatCommand(args)); err != nil {
+			return err
+		}
 		return nil
 	}
 	if !opts.yes && !e.stdinTTY {
