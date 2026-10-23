@@ -63,10 +63,33 @@ func compileGlob(pattern string) (*regexp.Regexp, error) {
 				return nil, fmt.Errorf("invalid pattern %q: unterminated [", pattern)
 			}
 			class := pattern[i+1 : i+1+end]
+			// '!' is the only negation marker. A leading '^' is a literal
+			// caret, and '\' is a literal backslash; both are metacharacters
+			// in a regexp class, so copying the class through unchanged would
+			// turn [^a] into "not a" and [\d] into "any digit".
+			neg := false
 			if rest, ok := strings.CutPrefix(class, "!"); ok {
-				class = "^" + rest
+				neg = true
+				class = rest
 			}
-			sb.WriteString("[" + class + "]")
+			var cb strings.Builder
+			cb.WriteByte('[')
+			if neg {
+				cb.WriteByte('^')
+			}
+			for j := 0; j < len(class); j++ {
+				c := class[j]
+				switch {
+				case c == '\\':
+					cb.WriteString(`\\`)
+				case j == 0 && c == '^':
+					cb.WriteString(`\^`)
+				default:
+					cb.WriteByte(c)
+				}
+			}
+			cb.WriteByte(']')
+			sb.WriteString(cb.String())
 			i += end + 1
 		default:
 			sb.WriteString(regexp.QuoteMeta(string(c)))
