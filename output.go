@@ -101,18 +101,19 @@ func writeBranches(w io.Writer, format outputFormat, branches []Branch, meta lis
 		return writeJSON(w, branches, meta, now)
 	case formatPorcelain:
 		for _, b := range branches {
-			fmt.Fprintln(w, b.Name)
+			if _, err := fmt.Fprintln(w, b.Name); err != nil {
+				return err
+			}
 		}
 		return nil
 	default:
-		writeTable(w, branches, now, color)
-		return nil
+		return writeTable(w, branches, now, color)
 	}
 }
 
 // writeTable prints branches as an aligned table, colored when color is
 // set. Alignment is computed on the plain text.
-func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) {
+func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) error {
 	header := []string{"BRANCH", "AGE", "AUTHOR", "STATUS", "AHEAD", "BEHIND"}
 	rightAlign := []bool{false, false, false, false, true, true}
 	withNote := false
@@ -166,8 +167,11 @@ func writeTable(w io.Writer, branches []Branch, now time.Time, color bool) {
 				sb.WriteString(cell + pad)
 			}
 		}
-		fmt.Fprintln(w, strings.TrimRight(sb.String(), " "))
+		if _, err := fmt.Fprintln(w, strings.TrimRight(sb.String(), " ")); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // displayWidth is the number of terminal columns s takes up: wide and
